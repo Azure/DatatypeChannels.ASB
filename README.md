@@ -1,4 +1,9 @@
-# Project
+# ASB.fs
+
+[![Build Status](https://dev.azure.com/azure-fsharp-libs/public/_apis/build/status/Azure.ASB.fs?branchName=master)](https://dev.azure.com/azure-fsharp-libs/public/_build/latest?definitionId=1&branchName=master)
+[![NuGet](https://img.shields.io/nuget/v/ASB.fs.svg?style=flat)](https://www.nuget.org/packages/ASB.fs/)
+
+
 Simple, F#-friendly abstraction layer over Azure Service Bus .NET clients, featuring:
 - `EventStreams` module and interface that provide a way to construct `Consumer` and `Publisher` instances.
 - Pull-based `Consumer` interface implementation with deterministic release and background message lock renewal.
