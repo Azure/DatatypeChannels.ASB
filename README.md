@@ -1,14 +1,34 @@
 # Project
+Simple, F#-friendly abstraction layer over Azure Service Bus .NET clients, featuring:
+- `EventStreams` module and interface that provide a way to construct `Consumer` and `Publisher` instances.
+- Pull-based `Consumer` interface implementation with deterministic release and background message lock renewal.
+- One-off and reusable `Publisher` instances.
+- Subscription and queue based bindings, with automatic upkeep (create/update), as well as temporary and deadletter queues.
+- Pluggable serialization and conversion between bus primitives and application message representation.
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+`Consumer` and `Publisher` types facilitate both sides of [Datatype Channel pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html) and pull-based consumer is useful for implementation of [CEP](https://en.wikipedia.org/wiki/Complex_event_processing) systems with backpressure/throttling, hence "event streams".
 
-As the maintainer of this project, please make a few updates:
+> Loosely based on [FsBunny](https://et1975.github.io/FsBunny) - F# API for event streaming over RMQ.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+## Building
+Pre-requisites:
+- .NET SDK 5.0
+- Azure CLI
+
+When building for the first time:
+```
+dotnet tool restore
+dotnet fake build -t init <YOUR_LOCATION> <YOUR_RG> <YOUR_NAMESPACE>
+```
+Where 
+- <YOUR_LOCATION> is Azure region where Service Bus will be provisioned
+- <YOUR_RG> is the name of the resource group to deploy into
+- <YOUR_NAMESPACE> Azure Service Bus namespace to create 
+
+```
+dotnet fake build
+```
+
 
 ## Contributing
 
