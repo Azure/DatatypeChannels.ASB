@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Data channeling API for Azure Service Bus
+</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="author" content="Azure.ServiceBus.DatatypeChannels">
+
+    <link rel="stylesheet" id="theme_link" href="https://cdnjs.cloudflare.com/ajax/libs/bootswatch/4.3.1/materia/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+
+    <script type="text/javascript" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+
+    <link type="text/css" rel="stylesheet" href="/Azure.ServiceBus.DatatypeChannels/content/navbar-fixed-right.css" />
+    <link type="text/css" rel="stylesheet" href="/Azure.ServiceBus.DatatypeChannels/content/fsdocs-default.css" />
+    <link type="text/css" rel="stylesheet" href="/Azure.ServiceBus.DatatypeChannels/content/fsdocs-custom.css" />
+    <script type="text/javascript" src="/Azure.ServiceBus.DatatypeChannels/content/fsdocs-tips.js"></script>
+    <!-- HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="http://html5shim.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <!-- BEGIN SEARCH BOX: this adds support for the search box -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/JavaScript-autoComplete/1.0.4/auto-complete.css" />
+    <!-- END SEARCH BOX: this adds support for the search box -->
+    
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-md navbar-light bg-secondary fixed-right" id="fsdocs-menu">
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarsExampleDefault" aria-controls="navbarsExampleDefault" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarsExampleDefault">
+            <a href="/Azure.ServiceBus.DatatypeChannels/"><img id="fsdocs-logo" src="/Azure.ServiceBus.DatatypeChannels/img/logo.png" /></a>
+            <ul class="navbar-nav">
+                <li class="nav-header">Links</li>
+                <li class="nav-item" id="fsdocs-license-link"><a class="nav-link" href="{{fsdocs-license-link}}">License</a></li>
+                <li class="nav-item" id="fsdocs-release-notes-link"><a class="nav-link" href="{{fsdocs-release-notes-link}}">Release Notes</a></li>
+                <li class="nav-item" id="fsdocs-repository-link"><a class="nav-link" href="{{fsdocs-repository-link}}">Source Repository</a></li>
+                <li class="nav-header">
+  Documentation
+</li>             
+<li class="nav-item">
+  <a class="nav-link" href="/Azure.ServiceBus.DatatypeChannels/tutorial.html">
+    Namespaces
+
+  </a>
+</li>
+            </ul>
+        </div>
+    </nav>
+    <div class="container">
+        <div class="masthead">
+            <h3 class="muted"><a href="/Azure.ServiceBus.DatatypeChannels/">Azure.ServiceBus.DatatypeChannels</a></h3>
+        </div>
+        <hr />
+        <div class="container" id="fsdocs-content">
+            <h1><a name="Data-channeling-API-for-Azure-Service-Bus" class="anchor" href="#Data-channeling-API-for-Azure-Service-Bus">Data channeling API for Azure Service Bus</a></h1>
+<p>Azure.ServiceBus.DatatypeChannels implements <a href="https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html">Datatype Channel pattern</a> on top of official Azure Service Bus clients.</p>
+<p>A channel is an abstraction on top of Service Bus entities and it's implemented using topics, subscriptions and queues.
+The core idea is that while there are many channels, all carrying messages, every channel is dedicated to a single type of message serialized using a specific serializer.</p>
+<p>It works under assumptions that:</p>
+<ul>
+<li>the bus toplogy is shared among heterogenous players, it's not a private implementation detail</li>
+<li>we control the receiving side of the bus topology, we have <code>Manage</code> rights on a topic we're receiving from</li>
+<li>we can express the message type we expect with the topic + subscription rules</li>
+<li>the consumer is long-lived and handles only one type of message</li>
+<li>the consumer decides when to pull the next message of a subscription or a queue</li>
+<li>the publishers can be long- or short- lived</li>
+<li>we have multiple serialization formats and may want to add new ones easily, this may introduce a new channel</li>
+<li>we never want to loose a message, a message channel gets but is unable to read should be deadlettered</li>
+</ul>
+<h1><a name="Installing" class="anchor" href="#Installing">Installing</a></h1>
+<div class="row">
+  <div class="span1"></div>
+  <div class="span6">
+    <div class="well well-small" id="nuget">
+      The Azure.ServiceBus.DatatypeChannels library can be <a href="https://nuget.org/packages/Azure.ServiceBus.DatatypeChannels">installed from NuGet</a>:
+      <pre>dotnet add YOUR_PROJECT package Azure.ServiceBus.DatatypeChannels</pre>
+    </div>
+  </div>
+  <div class="span1"></div>
+</div>
+<h2><a name="Example" class="anchor" href="#Example">Example</a></h2>
+<p>This example demonstrates the complete roundtrip over the channel using Azure.ServiceBus.DatatypeChannels API:</p>
+<pre class="fssnip highlighted"><code lang="fsharp"><span class="k">open</span> <span onmouseout="hideTip(event, 'fs6', 10)" onmouseover="showTip(event, 'fs6', 10)" class="id">Azure</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs10', 11)" onmouseover="showTip(event, 'fs10', 11)" class="id">ServiceBus</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs11', 12)" onmouseover="showTip(event, 'fs11', 12)" class="id">DatatypeChannels</span>
+<span class="c">// create the entry point - DatatypeChannels</span>
+<span class="k">use</span> <span onmouseout="hideTip(event, 'fs12', 13)" onmouseover="showTip(event, 'fs12', 13)" class="id">channels</span> <span class="o">=</span> <span class="id">DatatypeChannels</span><span class="pn">.</span><span class="id">fromFqdn</span> <span class="s">&quot;mynamespace.servicebus.windows.net&quot;</span>
+                                         <span class="pn">(</span><span onmouseout="hideTip(event, 'fs6', 14)" onmouseover="showTip(event, 'fs6', 14)" class="id">Azure</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs13', 15)" onmouseover="showTip(event, 'fs13', 15)" class="id">Identity</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs14', 16)" onmouseover="showTip(event, 'fs14', 16)" class="id">DefaultAzureCredential</span> <span class="k">false</span><span class="pn">)</span>
+                                         <span class="pn">(</span><span onmouseout="hideTip(event, 'fs15', 17)" onmouseover="showTip(event, 'fs15', 17)" class="id">Log</span> <span onmouseout="hideTip(event, 'fs16', 18)" onmouseover="showTip(event, 'fs16', 18)" class="id">ignore</span><span class="pn">)</span> <span class="c">// no logging</span>
+
+<span class="c">// define the &quot;source&quot; - subscription and routing rules, together called &quot;binding&quot;</span>
+<span class="k">let</span> <span onmouseout="hideTip(event, 'fs17', 19)" onmouseover="showTip(event, 'fs17', 19)" class="id">src</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs18', 20)" onmouseover="showTip(event, 'fs18', 20)" class="uc">Subscription</span> <span class="pn">{</span> <span onmouseout="hideTip(event, 'fs18', 21)" onmouseover="showTip(event, 'fs18', 21)" class="prop">Subscription</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs19', 22)" onmouseover="showTip(event, 'fs19', 22)" class="id">CreateSubscriptionOptions</span><span class="pn">(</span><span class="s">&quot;mytopic&quot;</span><span class="pn">,</span> <span class="s">&quot;mysub&quot;</span><span class="pn">,</span> <span class="id">MaxDeliveryCount</span> <span class="o">=</span> <span class="n">1</span><span class="pn">)</span><span class="pn">,</span> <span class="id">Rule</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs20', 23)" onmouseover="showTip(event, 'fs20', 23)" class="id">None</span> <span class="pn">}</span>
+
+<span class="c">// create a consumer, specifying the convertion function from bus primitives</span>
+<span class="k">let</span> <span onmouseout="hideTip(event, 'fs21', 24)" onmouseover="showTip(event, 'fs21', 24)" class="id">consumer</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs12', 25)" onmouseover="showTip(event, 'fs12', 25)" class="id">channels</span><span class="pn">.</span><span class="id">GetConsumer</span> <span onmouseout="hideTip(event, 'fs17', 26)" onmouseover="showTip(event, 'fs17', 26)" class="id">src</span> <span class="id">PlainText</span><span class="pn">.</span><span class="id">ofReceived</span> <span class="c">// see the tutorial for details</span>
+
+<span class="c">// create a publisher, specifying the target topic and the conversion function to bus primitives</span>
+<span class="k">let</span> <span onmouseout="hideTip(event, 'fs22', 27)" onmouseover="showTip(event, 'fs22', 27)" class="id">publisher</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs12', 28)" onmouseover="showTip(event, 'fs12', 28)" class="id">channels</span><span class="pn">.</span><span class="id">GetPublisher</span> <span class="id">PlainText</span><span class="pn">.</span><span class="id">toSend</span> <span class="pn">(</span><span onmouseout="hideTip(event, 'fs23', 29)" onmouseover="showTip(event, 'fs23', 29)" class="id">Topic</span> <span class="s">&quot;mytopic&quot;</span><span class="pn">)</span>  <span class="c">// see the tutorial for details</span>
+<span onmouseout="hideTip(event, 'fs24', 30)" onmouseover="showTip(event, 'fs24', 30)" class="id">Threading</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs25', 31)" onmouseover="showTip(event, 'fs25', 31)" class="rt">Thread</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs26', 32)" onmouseover="showTip(event, 'fs26', 32)" class="id">Sleep</span> <span class="n">5_000</span> <span class="c">// majic number - this is how long it takes the topic to start routing messages to new subscriptions</span>
+<span onmouseout="hideTip(event, 'fs27', 33)" onmouseover="showTip(event, 'fs27', 33)" class="k">task</span> <span class="pn">{</span>
+    <span class="k">do!</span> <span onmouseout="hideTip(event, 'fs22', 34)" onmouseover="showTip(event, 'fs22', 34)" class="id">publisher</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs28', 35)" onmouseover="showTip(event, 'fs28', 35)" class="m">Publisher</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs29', 36)" onmouseover="showTip(event, 'fs29', 36)" class="id">publish</span> <span class="s">&quot;test-payload&quot;</span>
+    <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs30', 37)" onmouseover="showTip(event, 'fs30', 37)" class="fn">received</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs31', 38)" onmouseover="showTip(event, 'fs31', 38)" class="vt">TimeSpan</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs32', 39)" onmouseover="showTip(event, 'fs32', 39)" class="id">FromSeconds</span> <span class="n">3.</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs21', 40)" onmouseover="showTip(event, 'fs21', 40)" class="id">consumer</span><span class="pn">.</span><span class="id">Get</span>
+    <span onmouseout="hideTip(event, 'fs33', 41)" onmouseover="showTip(event, 'fs33', 41)" class="fn">printfn</span> <span class="s">&quot;Received: </span><span class="pf">%A</span><span class="s">&quot;</span> <span onmouseout="hideTip(event, 'fs30', 42)" onmouseover="showTip(event, 'fs30', 42)" class="fn">received</span>
+    <span class="k">do!</span> <span onmouseout="hideTip(event, 'fs21', 43)" onmouseover="showTip(event, 'fs21', 43)" class="id">consumer</span><span class="pn">.</span><span class="id">Ack</span> <span onmouseout="hideTip(event, 'fs30', 44)" onmouseover="showTip(event, 'fs30', 44)" class="id">received</span><span class="pn">.</span><span class="id">Value</span><span class="pn">.</span><span class="id">Id</span>
+<span class="pn">}</span>
+</code></pre>
+<p>Note that the API is task-based and the bindings are defined using <code>Azure.Messaging.ServiceBus.Administration</code> types.
+Constructing a consumer establishes the connection and sets up or updates the subscription to the rule specified.
+Other types of consumer sources are <code>DeadLetter</code>, <code>Queue</code> and <code>Temporary</code>.</p>
+<h2><a name="Samples-amp-documentation" class="anchor" href="#Samples-amp-documentation">Samples &amp; documentation</a></h2>
+<ul>
+<li><p><a href="tutorial.html">Tutorial</a> goes into more details.</p></li>
+<li>
+<p><a href="reference/index.html">API Reference</a> contains automatically generated documentation for all types, modules
+and functions in the library. This includes additional brief samples on using most of the
+functions.</p>
+</li>
+</ul>
+<h2><a name="Contributing-and-copyright" class="anchor" href="#Contributing-and-copyright">Contributing and copyright</a></h2>
+<p>The project is hosted on <a href="https://github.com/Azure/Azure.ServiceBus.DatatypeChannels">GitHub</a> where you can <a href="https://github.com/Azure/Azure.ServiceBus.DatatypeChannels/issues">report issues</a>, fork
+the project and submit pull requests.</p>
+<p>The library is available under MIT license, which allows modification and
+redistribution for both commercial and non-commercial purposes. For more information see the
+<a href="https://github.com/Azure/Azure.ServiceBus.DatatypeChannels/blob/master/LICENSE.md">License file</a> in the GitHub repository.</p>
+<p>Copyright 2021 Microsoft</p>
+
+            <div class="fsdocs-tip" id="fs1">namespace System</div>
+<div class="fsdocs-tip" id="fs2">Multiple items<br />namespace FSharp<br /><br />--------------------<br />namespace Microsoft.FSharp</div>
+<div class="fsdocs-tip" id="fs3">Multiple items<br />namespace FSharp.Control<br /><br />--------------------<br />namespace Microsoft.FSharp.Control</div>
+<div class="fsdocs-tip" id="fs4">namespace FSharp.Control.Tasks</div>
+<div class="fsdocs-tip" id="fs5">module Builders<br /><br />from FSharp.Control.Tasks</div>
+<div class="fsdocs-tip" id="fs6">namespace Azure</div>
+<div class="fsdocs-tip" id="fs7">namespace Azure.Messaging</div>
+<div class="fsdocs-tip" id="fs8">namespace Azure.Messaging.ServiceBus</div>
+<div class="fsdocs-tip" id="fs9">namespace Azure.Messaging.ServiceBus.Administration</div>
+<div class="fsdocs-tip" id="fs10">namespace Azure.ServiceBus</div>
+<div class="fsdocs-tip" id="fs11">namespace Azure.ServiceBus.DatatypeChannels</div>
+<div class="fsdocs-tip" id="fs12">val channels : obj</div>
+<div class="fsdocs-tip" id="fs13">namespace Azure.Identity</div>
+<div class="fsdocs-tip" id="fs14">Multiple items<br /><br />--------------------<br />Azure.Identity.DefaultAzureCredential(?includeInteractiveCredentials: bool) : Azure.Identity.DefaultAzureCredential<br />Azure.Identity.DefaultAzureCredential(options: Azure.Identity.DefaultAzureCredentialOptions) : Azure.Identity.DefaultAzureCredential</div>
+<div class="fsdocs-tip" id="fs15">Multiple items<br />union case Log.Log: (string * obj [] -&gt; unit) -&gt; Log<br /><br />--------------------<br />[&lt;Struct&gt;]<br />type Log = | Log of (string * obj [] -&gt; unit)</div>
+<div class="fsdocs-tip" id="fs16">val ignore : value:&#39;T -&gt; unit</div>
+<div class="fsdocs-tip" id="fs17">val src : Source</div>
+<div class="fsdocs-tip" id="fs18">union case Source.Subscription: Binding -&gt; Source</div>
+<div class="fsdocs-tip" id="fs19">Multiple items<br />type CreateSubscriptionOptions =<br />&#160;&#160;interface IEquatable&lt;CreateSubscriptionOptions&gt;<br />&#160;&#160;new : topicName: string * subscriptionName: string -&gt; unit + 1 overload<br />&#160;&#160;member Equals : obj: obj -&gt; bool + 1 overload<br />&#160;&#160;member GetHashCode : unit -&gt; int<br />&#160;&#160;static member op_Equality : left: CreateSubscriptionOptions * right: CreateSubscriptionOptions -&gt; bool<br />&#160;&#160;static member op_Inequality : left: CreateSubscriptionOptions * right: CreateSubscriptionOptions -&gt; bool<br />&#160;&#160;val ``&lt;DeadLetteringOnMessageExpiration&gt;k__BackingField`` : bool<br />&#160;&#160;val ``&lt;EnableBatchedOperations&gt;k__BackingField`` : bool<br />&#160;&#160;val ``&lt;EnableDeadLetteringOnFilterEvaluationExceptions&gt;k__BackingField`` : bool<br />&#160;&#160;val ``&lt;RequiresSession&gt;k__BackingField`` : bool<br />&#160;&#160;...<br /><br />--------------------<br />CreateSubscriptionOptions(subscription: SubscriptionProperties) : CreateSubscriptionOptions<br />CreateSubscriptionOptions(topicName: string, subscriptionName: string) : CreateSubscriptionOptions</div>
+<div class="fsdocs-tip" id="fs20">union case Option.None: Option&lt;&#39;T&gt;</div>
+<div class="fsdocs-tip" id="fs21">val consumer : obj</div>
+<div class="fsdocs-tip" id="fs22">val publisher : Publisher&lt;string&gt;</div>
+<div class="fsdocs-tip" id="fs23">Multiple items<br />union case Topic.Topic: string -&gt; Topic<br /><br />--------------------<br />module Topic<br /><br />from Azure.ServiceBus.DatatypeChannels<br /><br />--------------------<br />[&lt;Struct&gt;]<br />type Topic = | Topic of string</div>
+<div class="fsdocs-tip" id="fs24">namespace System.Threading</div>
+<div class="fsdocs-tip" id="fs25">Multiple items<br />type Thread =<br />&#160;&#160;inherit CriticalFinalizerObject<br />&#160;&#160;new : start: ParameterizedThreadStart -&gt; unit + 3 overloads<br />&#160;&#160;member Abort : unit -&gt; unit + 1 overload<br />&#160;&#160;member DisableComObjectEagerCleanup : unit -&gt; unit<br />&#160;&#160;member Finalize : unit -&gt; unit<br />&#160;&#160;member GetApartmentState : unit -&gt; ApartmentState<br />&#160;&#160;member GetCompressedStack : unit -&gt; CompressedStack<br />&#160;&#160;member GetHashCode : unit -&gt; int<br />&#160;&#160;member Interrupt : unit -&gt; unit<br />&#160;&#160;member Join : unit -&gt; unit + 2 overloads<br />&#160;&#160;...<br /><br />--------------------<br />Threading.Thread(start: Threading.ParameterizedThreadStart) : Threading.Thread<br />Threading.Thread(start: Threading.ThreadStart) : Threading.Thread<br />Threading.Thread(start: Threading.ParameterizedThreadStart, maxStackSize: int) : Threading.Thread<br />Threading.Thread(start: Threading.ThreadStart, maxStackSize: int) : Threading.Thread</div>
+<div class="fsdocs-tip" id="fs26">Threading.Thread.Sleep(timeout: TimeSpan) : unit<br />Threading.Thread.Sleep(millisecondsTimeout: int) : unit</div>
+<div class="fsdocs-tip" id="fs27">val task : TaskBuilder</div>
+<div class="fsdocs-tip" id="fs28">Multiple items<br />union case Publisher.Publisher: (&#39;msg -&gt; Threading.Tasks.Task&lt;unit&gt;) -&gt; Publisher&lt;&#39;msg&gt;<br /><br />--------------------<br />module Publisher<br /><br />from Azure.ServiceBus.DatatypeChannels<br /><br />--------------------<br />[&lt;Struct&gt;]<br />type Publisher&lt;&#39;msg&gt; = | Publisher of (&#39;msg -&gt; Task&lt;unit&gt;)</div>
+<div class="fsdocs-tip" id="fs29">val publish : msg:&#39;msg -&gt; Publisher&lt;&#39;msg&gt; -&gt; Threading.Tasks.Task&lt;unit&gt;</div>
+<div class="fsdocs-tip" id="fs30">val received : obj</div>
+<div class="fsdocs-tip" id="fs31">Multiple items<br />[&lt;Struct&gt;]<br />type TimeSpan =<br />&#160;&#160;new : hours: int * minutes: int * seconds: int -&gt; unit + 3 overloads<br />&#160;&#160;member Add : ts: TimeSpan -&gt; TimeSpan<br />&#160;&#160;member CompareTo : value: obj -&gt; int + 1 overload<br />&#160;&#160;member Divide : divisor: float -&gt; TimeSpan + 1 overload<br />&#160;&#160;member Duration : unit -&gt; TimeSpan<br />&#160;&#160;member Equals : value: obj -&gt; bool + 2 overloads<br />&#160;&#160;member GetHashCode : unit -&gt; int<br />&#160;&#160;member Multiply : factor: float -&gt; TimeSpan<br />&#160;&#160;member Negate : unit -&gt; TimeSpan<br />&#160;&#160;member Subtract : ts: TimeSpan -&gt; TimeSpan<br />&#160;&#160;...<br /><br />--------------------<br />TimeSpan ()<br />TimeSpan(ticks: int64) : TimeSpan<br />TimeSpan(hours: int, minutes: int, seconds: int) : TimeSpan<br />TimeSpan(days: int, hours: int, minutes: int, seconds: int) : TimeSpan<br />TimeSpan(days: int, hours: int, minutes: int, seconds: int, milliseconds: int) : TimeSpan</div>
+<div class="fsdocs-tip" id="fs32">TimeSpan.FromSeconds(value: float) : TimeSpan</div>
+<div class="fsdocs-tip" id="fs33">val printfn : format:Printf.TextWriterFormat&lt;&#39;T&gt; -&gt; &#39;T</div>
+
+        </div>
+
+        <!-- BEGIN SEARCH BOX: this adds support for the search box -->
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/JavaScript-autoComplete/1.0.4/auto-complete.css" />
+        <script type="text/javascript">var fsdocs_search_baseurl = '/Azure.ServiceBus.DatatypeChannels/';</script>
+        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/lunr.js/2.3.8/lunr.min.js"></script>
+        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/JavaScript-autoComplete/1.0.4/auto-complete.min.js"></script>
+        <script type="text/javascript" src="/Azure.ServiceBus.DatatypeChannels/content/fsdocs-search.js"></script>
+        <!-- END SEARCH BOX: this adds support for the search box -->
+    </div>
+</body>
+
+</html>
