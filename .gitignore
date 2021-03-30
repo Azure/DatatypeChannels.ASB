@@ -1,7 +1,7 @@
 .vs/
 .idea/
 .ionide/
-
+.fsdocs/
 .dotnet/
 .local/
 .nuget/
@@ -12,8 +12,9 @@ packages/
 
 .fake
 .farmer
-docs/output/
+/output
 temp/
+tmp/
 *.user
 local.settings.json
 

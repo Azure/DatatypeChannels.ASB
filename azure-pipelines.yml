@@ -20,16 +20,17 @@ steps:
         command: custom
         custom: tool
         arguments: restore
-        
-    - task: DotNetCoreCLI@2
-      displayName: "Build and publish"
+
+    - task: AzureCLI@2
       env:
         NUGET_REPO_KEY: $(NUGET_REPO_KEY)
       inputs:
-        command: custom
-        custom: fake
+        azureSubscription: 'Azure VMware Solution - Testing Subscription 1 [Engg Group Only](7f1fae41-7708-4fa4-89b3-f6552cad2fc1)'
+        scriptType: 'bash'
+        addSpnToEnvironment: true
+        scriptLocation: 'inlineScript'
         ${{ if startsWith(variables['Build.SourceBranch'], 'refs/tags') }}:
-            arguments: 'build -t release'
+          inlineScript: 'dotnet fake build -t release'
         ${{ if not(startsWith(variables['Build.SourceBranch'], 'refs/tags')) }}:
-            arguments: build -t build
+          inlineScript: 'dotnet fake build -t ci'
             

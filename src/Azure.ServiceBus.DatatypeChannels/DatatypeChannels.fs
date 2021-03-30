@@ -1,4 +1,4 @@
-﻿namespace ASB
+﻿namespace Azure.ServiceBus.DatatypeChannels
 
 open System
 open System.Threading.Tasks
@@ -8,10 +8,13 @@ open Azure.Messaging.ServiceBus.Administration
 
 [<RequireQualifiedAccess>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
-module EventStreams =
+module Channels =
     /// constructs event-stream publishers and consumers.
+    /// mkClient: function to construct the client.
+    /// mkAdminClient: function to construct the admin client.
+    /// log: function for diagnostics logging.
     /// retries: number of send/receieve attempts.
-    /// prefetch: prefetch limit.
+    /// prefetch: optional prefetch limit.
     /// tempIdle: temporary queue idle lifetime.
     let mkNew (mkClient: unit -> ServiceBusClient)
               (mkAdminClient: unit -> ServiceBusAdministrationClient)
@@ -24,13 +27,8 @@ module EventStreams =
         let withClient cont = cont client.Value
         let withAdminClient cont = cont adminClient.Value
 
-        { new EventStreams with
-            member __.GetPublisher<'msg> (Topic topic) toSend : Publisher<'msg> =
-                let sender = lazy client.Value.CreateSender topic
-                fun send -> send sender.Value
-                |> Publisher.mkNew retries toSend
-
-            member __.GetConsumer<'msg> source ofRecevied: Consumer<'msg> =
+        { new Channels with
+            member __.GetConsumer<'msg> ofRecevied source : Consumer<'msg> =
                 let withBindings, receiveOptions, renew =
                     match source with
                     | Subscription binding ->
@@ -56,7 +54,12 @@ module EventStreams =
                 prefetch |> Option.iter (fun v -> receiveOptions.PrefetchCount <- int v)
                 Consumer.mkNew receiveOptions retries renew ofRecevied withClient withBindings
 
-            member __.UsingPublisher<'msg> (Topic topic) toSend (cont:Publisher<'msg> -> Task<unit>) =
+            member __.GetPublisher<'msg> toSend (Topic topic) : Publisher<'msg> =
+                let sender = lazy client.Value.CreateSender topic
+                fun send -> send sender.Value
+                |> Publisher.mkNew retries toSend
+
+            member __.UsingPublisher<'msg> toSend (Topic topic) (cont:Publisher<'msg> -> Task<unit>) =
                 task {
                     let sender = client.Value.CreateSender topic
                     do!
@@ -70,11 +73,13 @@ module EventStreams =
                 if client.IsValueCreated then client.Value.DisposeAsync().AsTask().Wait()
         }
 
+    /// Build an instance using FQDN of the namespace and Azure TokenCredential
     let fromFqdn (fqNamespace: string) (credential: Azure.Core.TokenCredential) (log: Log) =
         mkNew (fun _ -> ServiceBusClient(fqNamespace, credential))
               (fun _ -> ServiceBusAdministrationClient(fqNamespace, credential))
               log 3us None (TimeSpan.FromMinutes 5.)
 
+    /// Build an instance using connection string
     let fromConnectionString (connString: string) (log: Log) =
         mkNew (fun _ -> ServiceBusClient connString)
               (fun _ -> ServiceBusAdministrationClient connString)

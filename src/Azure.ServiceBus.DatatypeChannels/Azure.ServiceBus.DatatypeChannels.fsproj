@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.1</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
@@ -16,7 +15,7 @@
     <Compile Include="Consumer.fs" />
     <Compile Include="Publisher.fs" />
     <Compile Include="Bindings.fs" />
-    <Compile Include="EventStreams.fs" />
+    <Compile Include="DatatypeChannels.fs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.0.1" />

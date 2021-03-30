@@ -1,6 +1,8 @@
 (*** hide ***)
-#I "../../src/ASB.fs/bin/Debug/netstandard2.1/publish"
-#r "ASB.fs.dll"
+#I "../tests/Azure.ServiceBus.DatatypeChannels.Tests/bin/Release/net5.0/publish"
+#r "Azure.Core.dll"
+#r "Azure.Identity.dll"
+#r "Azure.ServiceBus.DatatypeChannels.dll"
 #r "Ply.dll"
 #r "Azure.Messaging.ServiceBus.dll"
 
@@ -9,34 +11,33 @@ open System
 Namespaces
 ========================
 
-ASB is organized into 3 APIs:
+Azure.ServiceBus.DatatypeChannels is organized into 3 APIs:
 
-- `EventStreams` API - connects to Azure Service Bus and provides constructors for publishers and consumers 
+- `Channels` API - connects to Azure Service Bus and provides constructors for publishers and consumers 
 - `ToSend`/`OfReceived` types for packing and unpacking messages in and out of Azure Service Bus primitives
 - `Publisher` and `Consumer` types - the primary means of interaction
 
 
-EventStreams API
+Channels API
 ========================
-`EventStreams` is the entry point into the API, it can be constructed with a connection string or FQDN of the namespace, for example:
+`Channels` is the entry point into the API, it can be constructed with a connection string or FQDN of the namespace, for example:
 *)
 
-open ASB
-open FSharp.Control.Tasks.Builders
+open Azure.ServiceBus.DatatypeChannels
 
-use streams = EventStreams.fromFqdn "mynamespace.servicebus.windows.net"
-                                    (Azure.Identity.DefaultAzureCredential false)
-                                    (Log ignore) // no logging
+use channels = Channels.fromFqdn "mynamespace.servicebus.windows.net"
+                                 (Azure.Identity.DefaultAzureCredential false)
+                                 (Log ignore) // no logging
 
 (**
-For other construction parameters please see `EventStreams.mkNew`.
+For other construction parameters please see `Channels.mkNew`.
 Internally two connections might be established - one for consumer bindings management and one for data activities.
-The connections are established just in time for the first use and are cached for the lifetime of `EventStreams`.
+The connections are established just in time for the first use and are cached for the lifetime of `Channels` factory.
 
 
 Converting messages between application and bus representations
 ========================
-`Publisher` and `Consumer` opereate as opposite ends of a [Datatype Channel](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html), meaning that the type of message is determinated staticaly and for entire lifetime of the channel.
+`Publisher` and `Consumer` implement the opposite ends of a [Datatype Channel](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html), meaning that the type of message is determinated staticaly and for entire lifetime of the channel.
 Implement `OfRecieved` and `ToSend` functions to convert from/to service bus primitives. 
 
 Here's an example of a plain text converters:
@@ -64,16 +65,15 @@ Publisher
 Publisher is just a function that takes a message and returns when completed and 
 there are two ways to obtain it:
 
-- For long-living use,
-- Or for immediate use and disposal of the publisher
+- For long-living use:
 *)
 
-let publisher = streams.GetPublisher (Topic "topic") PlainText.toSend // long-living publisher
-
+let publisher = channels.GetPublisher PlainText.toSend (Topic "topic") // long-living publisher
 (**
-One-off publishing, using the infix operator:
+- Or for immediate use and disposal of the publisher:
+
 *)
-"test message" |-> streams.UsingPublisher (Topic "topic") PlainText.toSend
+"test message" |-> channels.UsingPublisher PlainText.toSend (Topic "topic") // one-off publishing, using the infix operator
 
 
 (** Consumer
@@ -88,14 +88,19 @@ open Azure.Messaging.ServiceBus.Administration
 
 // define the a Subscription binding with no filters
 let src = Subscription { Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }
+
 // create a consumer, specifying the convertion function from bus primitives
-let consumer = streams.GetConsumer src PlainText.ofReceived
+let consumer = channels.GetConsumer PlainText.ofReceived src
+
 // another example of a source - deadletter queue of the subscription defined above
-let dlq = DeadLetter "mytopic/Subscriptions/mysub" // this entity must exist, ASB.fs does not manage deadletter sources
-let dlqConsumer = streams.GetConsumer dlq PlainText.ofReceived
+// this entity must exist, Azure.ServiceBus.DatatypeChannels does not manage deadletter sources
+let dlq = DeadLetter "mytopic/Subscriptions/mysub" 
+let dlqConsumer = channels.GetConsumer PlainText.ofReceived dlq
+
 // define the a Persistent queue binding
 let consumer = Persistent (CreateQueueOptions("myqueue", LockDuration = TimeSpan.FromMinutes 6.),
                            [{ Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }])
+
 // define a Temporary queue binding, the messages will be auto-ack'ed
 let tmp = Temporary [{ Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }]
 
@@ -103,15 +108,19 @@ let tmp = Temporary [{ Subscription = CreateSubscriptionOptions("mytopic", "mysu
 Once created, we can start polling them, specifying the timeout:
 
 *)
+open FSharp.Control.Tasks.Builders
+
 task {
     let! received = TimeSpan.FromSeconds 3. |> consumer.Get
-    do! consumer.Nack received.Value.Id  // for this example - negative acknowledge the message so that it's routed to the deadletters
+    // for this example - negative acknowledge the message so that it's routed to the deadletters
+    do! consumer.Nack received.Value.Id
     let! received = TimeSpan.FromSeconds 3. |> dlqConsumer.Get // now we can process it from the deadletters
 }
 
 (**
 Note that:
+
 - when using prefetch: w/ or not you called `Get` the prefetch itself counts as a delivery attempt 
-- if expected message processing, specified as `LockDuration`, exceeds the maximum lock time, ASB.fs will override the duration with the valida maximum and setup background lock renewal task.
+- if expected message processing, specified as `LockDuration`, exceeds the maximum lock time, Azure.ServiceBus.DatatypeChannels will override the duration with the valida maximum and setup background lock renewal task.
 
 *)

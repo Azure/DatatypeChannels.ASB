@@ -1,4 +1,4 @@
-module ASB.Tests
+module Azure.ServiceBus.DatatypeChannels.Tests
 
 open System
 open System.Threading.Tasks
@@ -26,21 +26,19 @@ module PlainText =
 module Logging =
     open Microsoft.Extensions.Logging
     let info =
-        let log = LoggerFactory.Create(fun builder -> builder.AddConsole() |> ignore).CreateLogger<EventStreams>()
+        let log = LoggerFactory.Create(fun builder -> builder.AddConsole() |> ignore).CreateLogger<Channels>()
         fun (msg: string, args: obj[]) -> log.LogInformation(msg, args)
         |> Log
 
 module Settings =
+    open Microsoft.Extensions.Configuration
 
     [<CLIMutable>]
     type TestSettings = 
         { ServiceBus: string }
 
     let settings = 
-        let config = ConfigurationBuilder()
-                        .AddJsonFile("local.settings.json",false)
-                        .AddEnvironmentVariables()
-                        .Build()
+        let config = ConfigurationBuilder().AddJsonFile("local.settings.json",true).Build()
         let settings = { ServiceBus = "" }
         config.Bind settings
         settings
@@ -70,38 +68,38 @@ module Binding =
 
 [<Tests>]
 let tests =
-    let topic = TempTopic.create "yetolmac1sb.servicebus.windows.net"
+    let topic = TempTopic.create Settings.settings.ServiceBus
                                  (Azure.Identity.DefaultAzureCredential false)
                                  Logging.info
-    use streams = EventStreams.fromFqdn "yetolmac1sb.servicebus.windows.net"
-                                        (Azure.Identity.DefaultAzureCredential false)
-                                        Logging.info
+    use channels = Channels.fromFqdn Settings.settings.ServiceBus
+                                     (Azure.Identity.DefaultAzureCredential false)
+                                     Logging.info
     testList "integration" [
         it "Creates src bindings" <| fun testId ->
             let src = [Binding.onTest (TestId "zzz") "creates-sub" topic] |> Temporary
-            use consumer = streams.GetConsumer src PlainText.ofReceived
+            use consumer = channels.GetConsumer PlainText.ofReceived src
             ()
 
         it "Creates subscription bindings" <| fun testId ->
             let src = Binding.onTest (TestId "zzz") "creates-sub" topic |> Subscription
-            use consumer = streams.GetConsumer src PlainText.ofReceived
+            use consumer = channels.GetConsumer PlainText.ofReceived src
             ()
 
         it "Updates bindings" <| fun testId ->
             let src =
                 (CreateQueueOptions("test-src"),
                  [Binding.onTest testId "updates-sub" topic]) |> Persistent
-            use consumer = streams.GetConsumer src PlainText.ofReceived
+            use consumer = channels.GetConsumer PlainText.ofReceived src
             let src =
                 (CreateQueueOptions("test-src", AutoDeleteOnIdle = TimeSpan.FromMinutes 5.),
                  [Binding.onTest testId "updates-sub" topic]) |> Persistent
-            use consumer = streams.GetConsumer src PlainText.ofReceived
+            use consumer = channels.GetConsumer PlainText.ofReceived src
             ()
 
         itt "Roundtrips" <| fun testId ->
             let src = [Binding.onTest testId "roundtrips-sub" topic] |> Temporary
-            let consumer = streams.GetConsumer src PlainText.ofReceived
-            let publisher = streams.GetPublisher topic (PlainText.toSend testId)
+            let consumer = channels.GetConsumer PlainText.ofReceived src
+            let publisher = channels.GetPublisher (PlainText.toSend testId) topic 
             Threading.Thread.Sleep 5_000 // majic number - this is how long it takes the backend to start routing messages to this subscription!
             task {
                 do! publisher |> Publisher.publish "test-payload"
@@ -116,10 +114,10 @@ let tests =
 
         itt "Reads deadletters" <| fun testId ->
             let src = Binding.onTest testId "dlq-sub" topic |> Subscription
-            let consumer = streams.GetConsumer src PlainText.ofReceived
+            let consumer = channels.GetConsumer PlainText.ofReceived src
             let dlq = sprintf "%s/Subscriptions/dlq-sub" (Topic.toString topic) |> DeadLetter
-            let dlqConsumer = streams.GetConsumer dlq PlainText.ofReceived
-            let publisher = streams.GetPublisher topic (PlainText.toSend testId)
+            let dlqConsumer = channels.GetConsumer PlainText.ofReceived dlq
+            let publisher = channels.GetPublisher (PlainText.toSend testId) topic
             Threading.Thread.Sleep 5_000 // majic number - this is how long it takes the backend to start routing messages to this subscription!
             task {
                 do! publisher |> Publisher.publish "test-payload"
@@ -131,27 +129,28 @@ let tests =
             }
 
         itt "Exceeding the lock duration renews message lock" <| fun testId ->
-            let src = 
-                (CreateQueueOptions("renews-src", LockDuration = TimeSpan.FromMinutes 6.), // 5min is maximum, hence the renewal will kick in
+            let src = // 5min is the maximum LockDuration, we'll adjust it and setup the lock renewal
+                (CreateQueueOptions("renews-queue", LockDuration = TimeSpan.FromMinutes 6., MaxDeliveryCount = 1, AutoDeleteOnIdle = TimeSpan.FromMinutes 5.),
                  [Binding.onTest testId "renews-sub" topic]) |> Persistent
-            let consumer = streams.GetConsumer src PlainText.ofReceived
-            let dlq = "renews-src" |> DeadLetter
-            let dlc = streams.GetConsumer src PlainText.ofReceived
-            let publisher = streams.GetPublisher topic (PlainText.toSend testId)
+            let consumer = channels.GetConsumer PlainText.ofReceived src
+            let dlc = DeadLetter "renews-queue" |> channels.GetConsumer PlainText.ofReceived
+            let publisher = channels.GetPublisher (PlainText.toSend testId) topic
             Threading.Thread.Sleep 5_000 // majic number - this is how long it takes the backend to start routing messages to this subscription!
             task {
                 do! publisher |> Publisher.publish "test-payload"
                 let! received = TimeSpan.FromSeconds 1. |> consumer.Get
-                do! Task.Delay (TimeSpan.FromMinutes 10.)
+                do! Task.Delay (TimeSpan.FromMinutes 7.)
                 do! consumer.Ack received.Value.Id
-                let! received = TimeSpan.FromSeconds 1. |> dlc.Get
+                let! received = TimeSpan.FromSeconds 1. |> consumer.Get // make sure it's no longer available
+                received =! None
+                let! received = TimeSpan.FromSeconds 1. |> dlc.Get // it wasn't moved to DLQ
                 received =! None
             }
 
         itt "Roundtrips lots" <| fun testId ->
             let src = [Binding.onTest testId "roundtrip-lots-sub" topic] |> Temporary
-            let consumer = streams.GetConsumer src PlainText.ofReceived
-            let publisher = streams.GetPublisher topic (PlainText.toSend testId)
+            let consumer = channels.GetConsumer PlainText.ofReceived src
+            let publisher = channels.GetPublisher (PlainText.toSend testId) topic
             Threading.Thread.Sleep 5_000 // majic number - this is how long it takes the backend to start routing messages to this subscription!
             task {
                 let n = 1_000

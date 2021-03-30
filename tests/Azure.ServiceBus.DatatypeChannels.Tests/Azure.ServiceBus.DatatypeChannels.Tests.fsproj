@@ -13,7 +13,7 @@
         </Content>
     </ItemGroup>
     <ItemGroup>
-        <ProjectReference Include="../../src/ASB.fs/ASB.fs.fsproj" />
+        <ProjectReference Include="../../src/Azure.ServiceBus.DatatypeChannels/Azure.ServiceBus.DatatypeChannels.fsproj" />
     </ItemGroup>
     <ItemGroup>
         <PackageReference Include="Azure.Identity" Version="1.2.2" />

@@ -1,5 +1,4 @@
 #r "paket:
-storage: packages
 nuget FSharp.Core ~> 4.7
 nuget Fake.DotNet.Cli
 nuget Fake.IO.FileSystem
@@ -10,7 +9,6 @@ nuget Microsoft.Extensions.Configuration.Json
 nuget Microsoft.Extensions.Configuration.Binder
 nuget Farmer ~> 1.4
 nuget FSharp.Formatting
-nuget FSharp.Formatting.CommandTool
 nuget Fake.DotNet.FSFormatting //"
 #load "./.fake/build.fsx/intellisense.fsx"
 #if !FAKE
@@ -26,13 +24,13 @@ open Fake.Tools
 open System
 open Farmer
 open Farmer.Arm
-open Farmer.KeyVault
 open Farmer.Builders
 
-let gitName = "ASB.fs"
+let gitName = "Azure.ServiceBus.DatatypeChannels"
 let gitOwner = "Azure"
 let gitHome = sprintf "https://github.com/%s" gitOwner
 let gitRepo = sprintf "git@github.com:%s/%s.git" gitOwner gitName
+let gitContent = sprintf "https://raw.githubusercontent.com/%s/%s" gitOwner gitName
 
 let release = ReleaseNotes.load "RELEASE_NOTES.md"
 let ver =
@@ -62,7 +60,21 @@ module Az =
     let query args =
         psh "az" args
     let currentUserId () =
-        query "ad signed-in-user show --query objectId -o tsv" "." Parse.plain
+        query "ad signed-in-user show --query objectId -o tsv" "." (Parse.plain >> Guid)
+    let currentSpId principalId =
+        query (sprintf "ad sp show --id %O --query objectId -o tsv" principalId) "." (Parse.plain >> Guid)
+
+module Settings =
+    open Microsoft.Extensions.Configuration
+    let [<Literal>] TestSettingsJson = "tests/Azure.ServiceBus.DatatypeChannels.Tests/local.settings.json"
+    type [<CLIMutable>] TestSettings = { ServiceBus: string }
+
+    let testSettings = 
+        lazy
+            let config = ConfigurationBuilder().AddJsonFile((Path.getFullName ".", TestSettingsJson) ||> Path.combine, false).Build()
+            let testSettings = { ServiceBus = "" }
+            config.Bind testSettings
+            testSettings
 
 module ARM = // workaround for https://github.com/dotnet/fsharp/issues/6434
     let AzureServiceBusDataOwner = Guid "090c5cfd-751d-490a-894a-3ce6f1109419"
@@ -78,17 +90,29 @@ module ARM = // workaround for https://github.com/dotnet/fsharp/issues/6434
                   principalId = principalId |}
            dependsOn = [| dependsOn |] |}
 
-module Settings =
-    open Microsoft.Extensions.Configuration
-    let [<Literal>] TestSettingsJson = "tests/ASB.Tests/local.settings.json"
-    type [<CLIMutable>] TestSettings = { ServiceBus: string }
+    let init (principalId, principalType) loc rg ns =
+        let sb = serviceBus {
+            name ns
+            sku ServiceBus.Sku.Standard
+        }
+        let sbDataOwner = 
+            roleAssingment (sprintf "[concat('Microsoft.ServiceBus/namespaces', '/', '%s')]" sb.Name.Value)
+                           principalType
+                           (sprintf "[guid(resourceGroup().id, '%O', '%O')]" principalId AzureServiceBusDataOwner)
+                           (string principalId)
+                           AzureServiceBusDataOwner
+                           ((ResourceId.create (ServiceBus.namespaces, sb.Name)).Eval())
+            |> Resource.ofObj
+        let deployment = arm {
+            location loc
+            add_resource sb
+            add_resource sbDataOwner
+        }
+        let _ = deployment |> Deploy.execute rg []
 
-    let testSettings = 
-        lazy
-            let config = ConfigurationBuilder().AddJsonFile((Path.getFullName ".", TestSettingsJson) ||> Path.combine, false).Build()
-            let testSettings = { ServiceBus = "" }
-            config.Bind testSettings
-            testSettings
+        printfn "Deployed, generating local settings..."
+        [ sprintf """{ "ServiceBus": "%s.servicebus.windows.net" }""" sb.Name.Value ]
+        |> File.write false Settings.TestSettingsJson
 
 Target.create "clean" (fun _ ->
     !! "**/bin"
@@ -102,17 +126,12 @@ Target.create "restore" (fun _ ->
 )
 
 Target.create "build" (fun _ ->
-    let args = "--no-restore -f netstandard2.1"
-    DotNet.publish (fun a -> a.WithCommon (fun c -> { c with CustomParams = Some args})) "src/ASB.fs"
+    let args = "--no-restore"
+    DotNet.publish (fun a -> a.WithCommon (fun c -> { c with CustomParams = Some args})) "."
 )
 
 Target.create "test" (fun _ ->
-    let args = "--no-restore --filter \"(Category!=integration & Category!=interactive)\""
-    DotNet.test (fun a -> a.WithCommon (fun c -> { c with CustomParams = Some args})) "."
-)
-
-Target.create "integration" (fun _ ->
-    let args = "--no-restore --filter \"Category = integration\""
+    let args = "--no-restore"
     DotNet.test (fun a -> a.WithCommon (fun c -> { c with CustomParams = Some args})) "."
 )
 
@@ -125,66 +144,42 @@ Target.create "publish" (fun _ ->
     let exec dir =
         DotNet.exec (fun a -> a.WithCommon (fun c -> { c with WorkingDirectory=dir }))
     let args = sprintf "push %s.%s.nupkg -s %s -k %s"
-                       "src/ASB.fs" ver.AsString
+                       "Azure.ServiceBus.DatatypeChannels" ver.AsString
                        (Environment.environVar "NUGET_REPO_URL")
                        (Environment.environVar "NUGET_REPO_KEY")
-    let result = exec ("src/ASB.fs/bin/Release") "nuget" args
+    let result = exec ("src/Azure.ServiceBus.DatatypeChannels/bin/Release") "nuget" args
     if (not result.OK) then failwithf "%A" result.Errors
 )
 
 Target.create "meta" (fun _ ->
     [ "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">"
       "<PropertyGroup>"
+      "<Copyright>(c) Microsoft Corporation. All rights reserved.</Copyright>"
       sprintf "<PackageProjectUrl>%s/%s</PackageProjectUrl>" gitHome gitName
       "<PackageLicense>MIT</PackageLicense>"
       sprintf "<PackageReleaseNotes>%s</PackageReleaseNotes>" (List.head release.Notes)
-      "<PackageIconUrl>https://raw.githubusercontent.com/Azure/ASB.fs/master/docs/files/img/logo.png</PackageIconUrl>"
+      sprintf "<PackageIconUrl>%s/master/docs/content/logo.png</PackageIconUrl>" gitContent
       "<PackageTags>Azure;Service Bus;CEP;fsharp</PackageTags>"
       sprintf "<Version>%s</Version>" (string ver)
+      sprintf "<FsDocsLogoLink>%s/master/docs/content/logo.png</FsDocsLogoLink>" gitContent
+      sprintf "<FsDocsLicenseLink>%s/blob/master/LICENSE.md</FsDocsLicenseLink>" gitRepo
+      sprintf "<FsDocsReleaseNotesLink>%s/blob/master/RELEASE_NOTES.md</FsDocsReleaseNotesLink>" gitRepo
+      "<FsDocsNavbarPosition>fixed-right</FsDocsNavbarPosition>"
+      "<FsDocsWarnOnMissingDocs>true</FsDocsWarnOnMissingDocs>"
+      "<FsDocsTheme>default</FsDocsTheme>"
       "</PropertyGroup>"
       "</Project>"]
     |> File.write false "Directory.Build.props"
 )
 
-
-// --------------------------------------------------------------------------------------
-// Generate the documentation
-let docs_out = "docs/output"
-let docsHome = "https://azure.github.io/ASB.fs"
-
-let generateDocs _ =
-    let info =
-      [ "project-name", "ASB.fs"
-        "project-author", "Azure Dedicated"
-        "project-summary", "Azure Service Bus F# web APIs"
-        "project-github", sprintf "%s/%s" gitHome gitName
-        "project-nuget", "http://nuget.org/packages/ASB.fs" ]
-
-    FSFormatting.createDocs (fun args ->
-            { args with
-                Source = "docs/content"
-                OutputDirectory = docs_out
-                LayoutRoots = [ "docs/tools/templates"
-                                ".fake/build.fsx/packages/FSharp.Formatting/templates" ]
-                ProjectParameters  = ("root", docsHome)::info
-                Template = "docpage.cshtml" } )
-    !!"**/*"
-    |> GlobbingPattern.setBaseDir "docs/files"
-    |> Shell.copyFilesWithSubFolder "docs/output"
-    !!"**/*"
-    |> GlobbingPattern.setBaseDir ".fake/build.fsx/packages/FSharp.Formatting/styles"
-    |> Shell.copyFilesWithSubFolder "docs/output"
-
-Target.create "generateDocs" generateDocs
+Target.create "generateDocs" (fun _ ->
+   Shell.cleanDir ".fsdocs"
+   DotNet.exec id "fsdocs" "build --clean" |> ignore
+)
 
 Target.create "watchDocs" (fun _ ->
-    use watcher =
-        (!! "docs/content/**/*.*")
-        |> ChangeWatcher.run generateDocs
-
-    Trace.traceImportant "Waiting for help edits. Press any key to stop."
-    System.Console.ReadKey() |> ignore
-    watcher.Dispose()
+   Shell.cleanDir ".fsdocs"
+   DotNet.exec id "fsdocs" "watch" |> ignore
 )
 
 Target.create "releaseDocs" (fun _ ->
@@ -192,7 +187,7 @@ Target.create "releaseDocs" (fun _ ->
     Shell.cleanDir tempDocsDir
     Git.Repository.cloneSingleBranch "" gitRepo "gh-pages" tempDocsDir
 
-    Shell.copyRecursive docs_out tempDocsDir true |> Trace.tracefn "%A"
+    Shell.copyRecursive "output" tempDocsDir true |> Trace.tracefn "%A"
     Git.Staging.stageAll tempDocsDir
     Git.Commit.exec tempDocsDir (sprintf "Update generated documentation for version %s" release.NugetVersion)
     Git.Branches.push tempDocsDir
@@ -202,40 +197,25 @@ Target.create "init" (fun p ->
     let loc, rg, privateName =
         match p.Context.Arguments with
         | [location; rg; name] -> Location location, rg, name
-        | _ -> failwith "Init requires parameters: Resource group to deploy into and Service Bus namespace to create."
+        | _ -> failwith "Init requires parameters: Azure region, resource group to deploy into and Service Bus namespace to create."
     let currentUser = Az.currentUserId()
-    let sb = serviceBus {
-        name privateName
-        sku ServiceBus.Sku.Standard
-    }
-    let sbDataOwner = 
-        ARM.roleAssingment (sprintf "[concat('Microsoft.ServiceBus/namespaces', '/', '%s')]" sb.Name.Value)
-                           "User"
-                           (sprintf "[guid(resourceGroup().id, '%s', '%O')]" currentUser ARM.AzureServiceBusDataOwner)
-                           currentUser
-                           ARM.AzureServiceBusDataOwner
-                           ((ResourceId.create (ServiceBus.namespaces, sb.Name)).Eval())
-        |> Resource.ofObj
-    let deployment = arm {
-        location loc
-        add_resource sb
-        add_resource sbDataOwner
-    }
-    let _ = 
-        deployment |> Deploy.execute rg []
+    ARM.init (currentUser, "User") loc rg privateName
+)
 
-    printfn "Deployed, generating local settings..."
-
-    [ sprintf """{
-        "ServiceBus": "%s.servicebus.windows.net"
-    }""" sb.Name.Value ]
-    |> File.write false Settings.TestSettingsJson
+Target.create "initCI" (fun _ ->
+    let loc = Location.CentralUS
+    let rg = "devops-azure-datatype-channels-dev"
+    let ns = "datatype-channels-ci"
+    let currentUser = Environment.environVar "servicePrincipalId" |> Az.currentSpId
+    ARM.init (currentUser, "ServicePrincipal") loc rg ns
 )
 
 Target.create "release" ignore
+Target.create "ci" ignore
 
 "clean"
   ==> "restore"
+  ==> "meta"
   ==> "build"
   ==> "test"
   ==> "generateDocs"
@@ -246,6 +226,9 @@ Target.create "release" ignore
   <== ["test"; "generateDocs" ]
 
 "release"
- <== [ "meta"; "publish" ]
+  <== [ "initCI"; "publish" ]
+
+"ci"
+  <== [ "initCI"; "test" ]
 
 Target.runOrDefaultWithArguments "test"

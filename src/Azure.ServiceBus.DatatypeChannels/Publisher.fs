@@ -1,5 +1,5 @@
 [<RequireQualifiedAccessAttribute>]
-module ASB.Publisher
+module Azure.ServiceBus.DatatypeChannels.Publisher
 open Azure.Messaging.ServiceBus
 open FSharp.Control.Tasks.Builders
 

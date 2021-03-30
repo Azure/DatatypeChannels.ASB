@@ -56,5 +56,5 @@ module Task =
 module Assembly =
     open System.Runtime.CompilerServices
     
-    [<InternalsVisibleTo("ASB.fs.Tests")>]
+    [<InternalsVisibleTo("Azure.ServiceBus.DatatypeChannels.Tests")>]
     ()

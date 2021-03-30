@@ -1,17 +1,17 @@
-# ASB.fs
+# Azure.ServiceBus.DatatypeChannels
 
-[![Build Status](https://dev.azure.com/azure-fsharp-libs/public/_apis/build/status/Azure.ASB.fs?branchName=master)](https://dev.azure.com/azure-fsharp-libs/public/_build/latest?definitionId=1&branchName=master)
-[![NuGet](https://img.shields.io/nuget/v/ASB.fs.svg?style=flat)](https://www.nuget.org/packages/ASB.fs/)
+[![Build Status](https://dev.azure.com/azure-fsharp-libs/public/_apis/build/status/Azure.Azure.ServiceBus.DatatypeChannels?branchName=master)](https://dev.azure.com/azure-fsharp-libs/public/_build/latest?definitionId=1&branchName=master)
+[![NuGet](https://img.shields.io/nuget/v/Azure.ServiceBus.DatatypeChannels.svg?style=flat)](https://www.nuget.org/packages/Azure.ServiceBus.DatatypeChannels/)
 
 
-Simple, F#-friendly abstraction layer over Azure Service Bus .NET clients, featuring:
-- `EventStreams` module and interface that provide a way to construct `Consumer` and `Publisher` instances.
+Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featuring:
+- `Channels` module and interface that provide a way to construct `Consumer` and `Publisher` instances.
 - Pull-based `Consumer` interface implementation with deterministic release and background message lock renewal.
 - One-off and reusable `Publisher` instances.
 - Subscription and queue based bindings, with automatic upkeep (create/update), as well as temporary and deadletter queues.
 - Pluggable serialization and conversion between bus primitives and application message representation.
 
-`Consumer` and `Publisher` types facilitate both sides of [Datatype Channel pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html) and pull-based consumer is useful for implementation of [CEP](https://en.wikipedia.org/wiki/Complex_event_processing) systems with backpressure/throttling, hence "event streams".
+`Consumer` and `Publisher` types facilitate both sides of [Datatype Channel pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html) and pull-based consumer is useful for implementation of [CEP](https://en.wikipedia.org/wiki/Complex_event_processing) systems with backpressure/throttling.
 
 > Loosely based on [FsBunny](https://et1975.github.io/FsBunny) - F# API for event streaming over RMQ.
 

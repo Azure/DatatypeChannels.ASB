@@ -1,5 +1,5 @@
 /// Consumer Implementation
-module internal ASB.Consumer
+module internal Azure.ServiceBus.DatatypeChannels.Consumer
 
 open System
 open System.Threading.Tasks

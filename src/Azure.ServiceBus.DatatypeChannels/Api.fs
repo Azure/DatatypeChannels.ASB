@@ -1,4 +1,4 @@
-﻿namespace ASB
+﻿namespace Azure.ServiceBus.DatatypeChannels
 
 open System
 open System.Threading.Tasks
@@ -27,6 +27,11 @@ type Source =
 [<Struct>]
 type Topic = Topic of string
 
+[<RequireQualifiedAccessAttribute>]
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module Topic =
+    let toString (Topic topic) = topic
+
 /// EventPublisher abstraction for publishing events to a topic.
 [<Struct>]
 type Publisher<'msg> = Publisher of ('msg -> Task<unit>)
@@ -48,22 +53,18 @@ type OfReceived<'msg> = OfReceived of (ServiceBusReceivedMessage -> 'msg)
 /// Disassembles user message into AMQP properties
 type ToSend<'msg> = ToSend of ('msg -> ServiceBusMessage)
 
-/// EventStreams is a factory for constructing consumers and publishers.
-type EventStreams =
+/// Channels is a factory for constructing channel consumers and publishers.
+type Channels =
     inherit IDisposable
 
     /// Construct a consumer, using specified message type, the source to bind to and the assember.
-    abstract GetConsumer<'msg> : Source -> OfReceived<'msg> -> Consumer<'msg>
+    abstract GetConsumer<'msg> : OfReceived<'msg> -> Source -> Consumer<'msg>
 
     /// Construct a publisher for the specified message type and disassembler.
-    abstract GetPublisher<'msg> : Topic -> ToSend<'msg> -> Publisher<'msg>
+    abstract GetPublisher<'msg> : ToSend<'msg> -> Topic -> Publisher<'msg>
 
     /// Use a publisher with a continuation for the specified message type and disassembler.
-    abstract UsingPublisher<'msg> : Topic -> ToSend<'msg> -> (Publisher<'msg> -> Task<unit>) -> Task<unit>
-
-[<RequireQualifiedAccessAttribute>]
-module Topic =
-    let toString (Topic topic) = topic
+    abstract UsingPublisher<'msg> : ToSend<'msg> -> Topic -> (Publisher<'msg> -> Task<unit>) -> Task<unit>
 
 /// Infix operators.
 [<AutoOpen>]
