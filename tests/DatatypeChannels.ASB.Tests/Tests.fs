@@ -1,4 +1,4 @@
-module Azure.ServiceBus.DatatypeChannels.Tests
+module DatatypeChannels.ASB.Tests
 
 open System
 open System.Threading.Tasks

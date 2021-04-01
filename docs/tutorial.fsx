@@ -1,8 +1,8 @@
 (*** hide ***)
-#I "../tests/Azure.ServiceBus.DatatypeChannels.Tests/bin/Release/net5.0/publish"
+#I "../tests/DatatypeChannels.ASB.Tests/bin/Release/net5.0/publish"
 #r "Azure.Core.dll"
 #r "Azure.Identity.dll"
-#r "Azure.ServiceBus.DatatypeChannels.dll"
+#r "DatatypeChannels.ASB.dll"
 #r "Ply.dll"
 #r "Azure.Messaging.ServiceBus.dll"
 
@@ -11,7 +11,7 @@ open System
 Namespaces
 ========================
 
-Azure.ServiceBus.DatatypeChannels is organized into 3 APIs:
+DatatypeChannels.ASB is organized into 3 APIs:
 
 - `Channels` API - connects to Azure Service Bus and provides constructors for publishers and consumers 
 - `ToSend`/`OfReceived` types for packing and unpacking messages in and out of Azure Service Bus primitives
@@ -23,7 +23,7 @@ Channels API
 `Channels` is the entry point into the API, it can be constructed with a connection string or FQDN of the namespace, for example:
 *)
 
-open Azure.ServiceBus.DatatypeChannels
+open DatatypeChannels.ASB
 
 use channels = Channels.fromFqdn "mynamespace.servicebus.windows.net"
                                  (Azure.Identity.DefaultAzureCredential false)
@@ -93,7 +93,7 @@ let src = Subscription { Subscription = CreateSubscriptionOptions("mytopic", "my
 let consumer = channels.GetConsumer PlainText.ofReceived src
 
 // another example of a source - deadletter queue of the subscription defined above
-// this entity must exist, Azure.ServiceBus.DatatypeChannels does not manage deadletter sources
+// this entity must exist, DatatypeChannels.ASB does not manage deadletter sources
 let dlq = DeadLetter "mytopic/Subscriptions/mysub" 
 let dlqConsumer = channels.GetConsumer PlainText.ofReceived dlq
 
@@ -121,6 +121,6 @@ task {
 Note that:
 
 - when using prefetch: w/ or not you called `Get` the prefetch itself counts as a delivery attempt 
-- if expected message processing, specified as `LockDuration`, exceeds the maximum lock time, Azure.ServiceBus.DatatypeChannels will override the duration with the valida maximum and setup background lock renewal task.
+- if expected message processing, specified as `LockDuration`, exceeds the maximum lock time, DatatypeChannels.ASB will override the duration with the valida maximum and setup background lock renewal task.
 
 *)

@@ -1,7 +1,7 @@
-# Azure.ServiceBus.DatatypeChannels
+# Azure Service Bus Datatype Channels
 
-[![Build Status](https://dev.azure.com/azure-fsharp-libs/public/_apis/build/status/Azure.Azure.ServiceBus.DatatypeChannels?branchName=master)](https://dev.azure.com/azure-fsharp-libs/public/_build/latest?definitionId=1&branchName=master)
-[![NuGet](https://img.shields.io/nuget/v/Azure.ServiceBus.DatatypeChannels.svg?style=flat)](https://www.nuget.org/packages/Azure.ServiceBus.DatatypeChannels/)
+[![Build Status](https://dev.azure.com/azure-fsharp-libs/public/_apis/build/status/Azure.DatatypeChannels.ASB?branchName=master)](https://dev.azure.com/azure-fsharp-libs/public/_build/latest?definitionId=1&branchName=master)
+[![NuGet](https://img.shields.io/nuget/v/DatatypeChannels.ASB.svg?style=flat)](https://www.nuget.org/packages/DatatypeChannels.ASB/)
 
 
 Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featuring:

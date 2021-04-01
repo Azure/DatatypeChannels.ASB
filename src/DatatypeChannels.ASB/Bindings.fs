@@ -1,4 +1,4 @@
-namespace Azure.ServiceBus.DatatypeChannels
+namespace DatatypeChannels.ASB
 
 open System
 open System.Threading.Tasks

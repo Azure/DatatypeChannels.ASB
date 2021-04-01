@@ -1,4 +1,4 @@
-module Azure.ServiceBus.DatatypeChannels.Program
+module DatatypeChannels.ASB.Program
 
 open Expecto
 

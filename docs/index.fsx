@@ -1,10 +1,10 @@
 (*** hide ***)
 // This block of code is omitted in the generated HTML documentation. Use 
 // it to define helpers that you do not want to show in the documentation.
-#I "../tests/Azure.ServiceBus.DatatypeChannels.Tests/bin/Release/net5.0/publish"
+#I "../tests/DatatypeChannels.ASB.Tests/bin/Release/net5.0/publish"
 #r "Azure.Identity.dll"
 #r "Azure.Core.dll"
-#r "Azure.ServiceBus.DatatypeChannels.dll"
+#r "DatatypeChannels.ASB.dll"
 #r "Ply.dll"
 #r "Azure.Messaging.ServiceBus.dll"
 
@@ -15,7 +15,7 @@ open Azure.Messaging.ServiceBus.Administration
 (**
 Data channeling API for Azure Service Bus
 ======================
-Azure.ServiceBus.DatatypeChannels implements [Datatype Channel pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html) on top of official Azure Service Bus clients.
+DatatypeChannels.ASB implements [Datatype Channel pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html) on top of official Azure Service Bus clients.
 
 A channel is an abstraction on top of Service Bus entities and it's implemented using topics, subscriptions and queues. 
 The core idea is that while there are many channels, all carrying messages, every channel is dedicated to a single type of message. 
@@ -39,8 +39,8 @@ Installing
   <div class="span1"></div>
   <div class="span6">
     <div class="well well-small" id="nuget">
-      The Azure.ServiceBus.DatatypeChannels library can be <a href="https://nuget.org/packages/Azure.ServiceBus.DatatypeChannels">installed from NuGet</a>:
-      <pre>dotnet add YOUR_PROJECT package Azure.ServiceBus.DatatypeChannels</pre>
+      The DatatypeChannels.ASB library can be <a href="https://nuget.org/packages/DatatypeChannels.ASB">installed from NuGet</a>:
+      <pre>dotnet add YOUR_PROJECT package DatatypeChannels.ASB</pre>
     </div>
   </div>
   <div class="span1"></div>
@@ -49,10 +49,10 @@ Installing
 Example
 -------
 
-This example demonstrates the complete roundtrip over the channel using Azure.ServiceBus.DatatypeChannels API:
+This example demonstrates the complete roundtrip over the channel using DatatypeChannels.ASB API:
 
 *)
-open Azure.ServiceBus.DatatypeChannels
+open DatatypeChannels.ASB
 // create the entry point - DatatypeChannels
 let channels = Channels.fromFqdn "mynamespace.servicebus.windows.net"
                                  (Azure.Identity.DefaultAzureCredential false)
@@ -96,11 +96,11 @@ The library is available under MIT license, which allows modification and
 redistribution for both commercial and non-commercial purposes. For more information see the 
 [License file][license] in the GitHub repository. 
 
-  [content]: https://github.com/Azure/Azure.ServiceBus.DatatypeChannels/tree/master/docs/content
-  [gh]: https://github.com/Azure/Azure.ServiceBus.DatatypeChannels
-  [issues]: https://github.com/Azure/Azure.ServiceBus.DatatypeChannels/issues
-  [readme]: https://github.com/Azure/Azure.ServiceBus.DatatypeChannels/blob/master/README.md
-  [license]: https://github.com/Azure/Azure.ServiceBus.DatatypeChannels/blob/master/LICENSE.md
+  [content]: https://github.com/Azure/DatatypeChannels.ASB/tree/master/docs/content
+  [gh]: https://github.com/Azure/DatatypeChannels.ASB
+  [issues]: https://github.com/Azure/DatatypeChannels.ASB/issues
+  [readme]: https://github.com/Azure/DatatypeChannels.ASB/blob/master/README.md
+  [license]: https://github.com/Azure/DatatypeChannels.ASB/blob/master/LICENSE.md
 
 
 Copyright 2021 Microsoft

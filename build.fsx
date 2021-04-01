@@ -66,7 +66,7 @@ module Az =
 
 module Settings =
     open Microsoft.Extensions.Configuration
-    let [<Literal>] TestSettingsJson = "tests/Azure.ServiceBus.DatatypeChannels.Tests/local.settings.json"
+    let [<Literal>] TestSettingsJson = "tests/DatatypeChannels.ASB.Tests/local.settings.json"
     type [<CLIMutable>] TestSettings = { ServiceBus: string }
 
     let testSettings = 
@@ -144,10 +144,10 @@ Target.create "publish" (fun _ ->
     let exec dir =
         DotNet.exec (fun a -> a.WithCommon (fun c -> { c with WorkingDirectory=dir }))
     let args = sprintf "push %s.%s.nupkg -s %s -k %s"
-                       "Azure.ServiceBus.DatatypeChannels" ver.AsString
+                       "DatatypeChannels.ASB" ver.AsString
                        (Environment.environVar "NUGET_REPO_URL")
                        (Environment.environVar "NUGET_REPO_KEY")
-    let result = exec ("src/Azure.ServiceBus.DatatypeChannels/bin/Release") "nuget" args
+    let result = exec ("src/DatatypeChannels.ASB/bin/Release") "nuget" args
     if (not result.OK) then failwithf "%A" result.Errors
 )
 
@@ -159,7 +159,7 @@ Target.create "meta" (fun _ ->
       "<PackageLicense>MIT</PackageLicense>"
       sprintf "<PackageReleaseNotes>%s</PackageReleaseNotes>" (List.head release.Notes)
       sprintf "<PackageIconUrl>%s/master/docs/content/logo.png</PackageIconUrl>" gitContent
-      "<PackageTags>Azure;Service Bus;CEP;fsharp</PackageTags>"
+      "<PackageTags>Azure;Service Bus;Datatype Channel;fsharp</PackageTags>"
       sprintf "<Version>%s</Version>" (string ver)
       sprintf "<FsDocsLogoLink>%s/master/docs/content/logo.png</FsDocsLogoLink>" gitContent
       sprintf "<FsDocsLicenseLink>%s/blob/master/LICENSE.md</FsDocsLicenseLink>" gitRepo
