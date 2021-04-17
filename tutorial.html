@@ -3,8 +3,7 @@
 
 <head>
     <meta charset="utf-8">
-    <title>Namespaces
-</title>
+    <title>tutorial</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <meta name="author" content="Eugene Tolmachev">
 
@@ -45,8 +44,7 @@
 </li>             
 <li class="nav-item">
   <a class="nav-link" href="https://Azure.github.io/DatatypeChannels.ASB/tutorial.html">
-    Namespaces
-
+    tutorial
   </a>
 </li>
             </ul>
@@ -58,14 +56,14 @@
         </div>
         <hr />
         <div class="container" id="fsdocs-content">
-            <h1><a name="Namespaces" class="anchor" href="#Namespaces">Namespaces</a></h1>
+            <h2><a name="Namespaces" class="anchor" href="#Namespaces">Namespaces</a></h2>
 <p>DatatypeChannels.ASB is organized into 3 APIs:</p>
 <ul>
 <li><code>Channels</code> API - connects to Azure Service Bus and provides constructors for publishers and consumers</li>
 <li><code>ToSend</code>/<code>OfReceived</code> types for packing and unpacking messages in and out of Azure Service Bus primitives</li>
 <li><code>Publisher</code> and <code>Consumer</code> types - the primary means of interaction</li>
 </ul>
-<h1><a name="Channels-API" class="anchor" href="#Channels-API">Channels API</a></h1>
+<h2><a name="Channels-API" class="anchor" href="#Channels-API">Channels API</a></h2>
 <p><code>Channels</code> is the entry point into the API, it can be constructed with a connection string or FQDN of the namespace, for example:</p>
 <pre class="fssnip highlighted"><code lang="fsharp"><span class="k">open</span> <span onmouseout="hideTip(event, 'fs2', 2)" onmouseover="showTip(event, 'fs2', 2)" class="id">DatatypeChannels</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs3', 3)" onmouseover="showTip(event, 'fs3', 3)" class="id">ASB</span>
 
@@ -76,7 +74,7 @@
 <p>For other construction parameters please see <code>Channels.mkNew</code>.
 Internally two connections might be established - one for consumer bindings management and one for data activities.
 The connections are established just in time for the first use and are cached for the lifetime of <code>Channels</code> factory.</p>
-<h1><a name="Converting-messages-between-application-and-bus-representations" class="anchor" href="#Converting-messages-between-application-and-bus-representations">Converting messages between application and bus representations</a></h1>
+<h2><a name="Converting-messages-between-application-and-bus-representations" class="anchor" href="#Converting-messages-between-application-and-bus-representations">Converting messages between application and bus representations</a></h2>
 <p><code>Publisher</code> and <code>Consumer</code> implement the opposite ends of a <a href="https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html">Datatype Channel</a>, meaning that the type of message is determinated staticaly and for entire lifetime of the channel.
 Implement <code>OfRecieved</code> and <code>ToSend</code> functions to convert from/to service bus primitives.</p>
 <p>Here's an example of a plain text converters:</p>
@@ -91,7 +89,7 @@ Implement <code>OfRecieved</code> and <code>ToSend</code> functions to convert f
         <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs22', 27)" onmouseover="showTip(event, 'fs22', 27)" class="uc">ToSend</span>
 </code></pre>
 <p>Any exception during convertion from the bus primitives will result in message being Nacked and sent to the Dead Letter queue (if configured).</p>
-<h1><a name="Publisher" class="anchor" href="#Publisher">Publisher</a></h1>
+<h2><a name="Publisher" class="anchor" href="#Publisher">Publisher</a></h2>
 <p>Publisher is just a function that takes a message and returns when completed and
 there are two ways to obtain it:</p>
 <ul>
@@ -104,7 +102,7 @@ there are two ways to obtain it:</p>
 </ul>
 <pre class="fssnip highlighted"><code lang="fsharp"><span class="s">&quot;test message&quot;</span> <span class="o">|-&gt;</span> <span onmouseout="hideTip(event, 'fs4', 34)" onmouseover="showTip(event, 'fs4', 34)" class="d">channels</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs27', 35)" onmouseover="showTip(event, 'fs27', 35)" class="id">UsingPublisher</span> <span onmouseout="hideTip(event, 'fs25', 36)" onmouseover="showTip(event, 'fs25', 36)" class="m">PlainText</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs18', 37)" onmouseover="showTip(event, 'fs18', 37)" class="id">toSend</span> <span class="pn">(</span><span onmouseout="hideTip(event, 'fs26', 38)" onmouseover="showTip(event, 'fs26', 38)" class="uc">Topic</span> <span class="s">&quot;topic&quot;</span><span class="pn">)</span> <span class="c">// one-off publishing, using the infix operator</span>
 </code></pre>
-<h1><a name="Consumer" class="anchor" href="#Consumer">Consumer</a></h1>
+<h2><a name="Consumer" class="anchor" href="#Consumer">Consumer</a></h2>
 <p>Consumer implicitly manages the susbcription every time it's created, updating forwarding and rules as needed.
 A persistent queue can be setup using one or more subscriptions, each one will forward to the queue automatically.</p>
 <blockquote>

@@ -3,8 +3,7 @@
 
 <head>
     <meta charset="utf-8">
-    <title>Data channeling API for Azure Service Bus
-</title>
+    <title>index</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <meta name="author" content="Eugene Tolmachev">
 
@@ -45,8 +44,7 @@
 </li>             
 <li class="nav-item">
   <a class="nav-link" href="https://Azure.github.io/DatatypeChannels.ASB/tutorial.html">
-    Namespaces
-
+    tutorial
   </a>
 </li>
             </ul>
@@ -58,7 +56,7 @@
         </div>
         <hr />
         <div class="container" id="fsdocs-content">
-            <h1><a name="Data-channeling-API-for-Azure-Service-Bus" class="anchor" href="#Data-channeling-API-for-Azure-Service-Bus">Data channeling API for Azure Service Bus</a></h1>
+            <h2><a name="Data-channeling-API-for-Azure-Service-Bus" class="anchor" href="#Data-channeling-API-for-Azure-Service-Bus">Data channeling API for Azure Service Bus</a></h2>
 <p>DatatypeChannels.ASB implements <a href="https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html">Datatype Channel pattern</a> on top of official Azure Service Bus clients.</p>
 <p>A channel is an abstraction on top of Service Bus entities and it's implemented using topics, subscriptions and queues.
 The core idea is that while there are many channels, all carrying messages, every channel is dedicated to a single type of message.</p>
@@ -73,7 +71,7 @@ The core idea is that while there are many channels, all carrying messages, ever
 <li>we never want to loose a message, a message channel gets but is unable to read should be deadlettered</li>
 <li>we control the receiving side of the bus topology and have 'Manage' permissions to create subscriptions and queues as necessary</li>
 </ul>
-<h1><a name="Installing" class="anchor" href="#Installing">Installing</a></h1>
+<h2><a name="Installing" class="anchor" href="#Installing">Installing</a></h2>
 <p>The DatatypeChannels.ASB library can be <a href="https://nuget.org/packages/DatatypeChannels.ASB">installed from NuGet</a>:
 <pre>dotnet add package DatatypeChannels.ASB</pre></p>
 <h2><a name="Example" class="anchor" href="#Example">Example</a></h2>
