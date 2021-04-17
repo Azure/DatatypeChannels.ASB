@@ -9,7 +9,7 @@
 open System
 (**
 Namespaces
-========================
+-----
 
 DatatypeChannels.ASB is organized into 3 APIs:
 
@@ -19,7 +19,7 @@ DatatypeChannels.ASB is organized into 3 APIs:
 
 
 Channels API
-========================
+-----
 `Channels` is the entry point into the API, it can be constructed with a connection string or FQDN of the namespace, for example:
 *)
 
@@ -36,7 +36,7 @@ The connections are established just in time for the first use and are cached fo
 
 
 Converting messages between application and bus representations
-========================
+-----
 `Publisher` and `Consumer` implement the opposite ends of a [Datatype Channel](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html), meaning that the type of message is determinated staticaly and for entire lifetime of the channel.
 Implement `OfRecieved` and `ToSend` functions to convert from/to service bus primitives. 
 
@@ -61,7 +61,7 @@ module PlainText =
 Any exception during convertion from the bus primitives will result in message being Nacked and sent to the Dead Letter queue (if configured).
 
 Publisher
-========================
+-----
 Publisher is just a function that takes a message and returns when completed and 
 there are two ways to obtain it:
 
@@ -77,7 +77,7 @@ let publisher = channels.GetPublisher PlainText.toSend (Topic "topic") // long-l
 
 
 (** Consumer
-========================
+-----
 Consumer implicitly manages the susbcription every time it's created, updating forwarding and rules as needed. 
 A persistent queue can be setup using one or more subscriptions, each one will forward to the queue automatically. 
 > Note: a known issue prevents idle detection on subscriptions that have auto-forwarding defined.

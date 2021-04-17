@@ -12,7 +12,7 @@ open Azure.Messaging.ServiceBus.Administration
 
 (**
 Data channeling API for Azure Service Bus
-======================
+-----
 DatatypeChannels.ASB implements [Datatype Channel pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/DatatypeChannel.html) on top of official Azure Service Bus clients.
 
 A channel is an abstraction on top of Service Bus entities and it's implemented using topics, subscriptions and queues. 
@@ -31,18 +31,10 @@ It works under assumptions that:
 
 
 Installing
-======================
+-------
 
-<div class="row">
-  <div class="span1"></div>
-  <div class="span6">
-    <div class="well" id="nuget">
-      The DatatypeChannels.ASB library can be <a href="https://nuget.org/packages/DatatypeChannels.ASB">installed from NuGet</a>:
-      <pre>dotnet add YOUR_PROJECT package DatatypeChannels.ASB</pre>
-    </div>
-  </div>
-  <div class="span1"></div>
-</div>
+The DatatypeChannels.ASB library can be <a href="https://nuget.org/packages/DatatypeChannels.ASB">installed from NuGet</a>:
+<pre>dotnet add package DatatypeChannels.ASB</pre>
 
 Example
 -------
@@ -100,6 +92,4 @@ redistribution for both commercial and non-commercial purposes. For more informa
   [readme]: https://github.com/Azure/DatatypeChannels.ASB/blob/master/README.md
   [license]: https://github.com/Azure/DatatypeChannels.ASB/blob/master/LICENSE.md
 
-
-Copyright 2021 Microsoft
 *)
