@@ -106,9 +106,12 @@ there are two ways to obtain it:</p>
 </code></pre>
 <h1><a name="Consumer" class="anchor" href="#Consumer">Consumer</a></h1>
 <p>Consumer implicitly manages the susbcription every time it's created, updating forwarding and rules as needed.
-A persistent queue can be setup using one or more subscriptions, with forwarding setup automatically.
-<code>Temporary</code> queue can be useful for short-lived consumers and is setup with auto-acknowedgments and a guid for a name, it will be deleted once consumer is disposed of.
-Implementing guaranteed processing a <code>Persistent</code> queue or a <code>Subscription</code> with Ack/Nack messages is recommended.</p>
+A persistent queue can be setup using one or more subscriptions, each one will forward to the queue automatically.</p>
+<blockquote>
+<p>Note: a known issue prevents idle detection on subscriptions that have auto-forwarding defined.</p>
+</blockquote>
+<p><code>Temporary</code> queue can be useful for short-lived consumers and is setup with auto-acknowedgments and a guid for a name, it will be deleted once consumer is disposed of.
+Implementing guaranteed processing a <code>Persistent</code> queue or a <code>Subscription</code> with explicit Ack/Nack of the messages is recommended.</p>
 <pre class="fssnip highlighted"><code lang="fsharp"><span class="k">open</span> <span onmouseout="hideTip(event, 'fs7', 39)" onmouseover="showTip(event, 'fs7', 39)" class="id">Azure</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs12', 40)" onmouseover="showTip(event, 'fs12', 40)" class="id">Messaging</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs13', 41)" onmouseover="showTip(event, 'fs13', 41)" class="id">ServiceBus</span><span class="pn">.</span><span onmouseout="hideTip(event, 'fs28', 42)" onmouseover="showTip(event, 'fs28', 42)" class="id">Administration</span>
 
 <span class="c">// define the a Subscription binding with no filters</span>
