@@ -7,9 +7,7 @@ nuget Fake.Core.Target
 nuget Fake.Tools.Git
 nuget Microsoft.Extensions.Configuration.Json
 nuget Microsoft.Extensions.Configuration.Binder
-nuget Farmer ~> 1.4
-nuget FSharp.Formatting
-nuget Fake.DotNet.FSFormatting //"
+nuget Farmer ~> 1.4 //"
 #load "./.fake/build.fsx/intellisense.fsx"
 #if !FAKE
   #r "Facades/netstandard"
@@ -26,9 +24,11 @@ open Farmer
 open Farmer.Arm
 open Farmer.Builders
 
-let gitName = "Azure.ServiceBus.DatatypeChannels"
+let gitName = "DatatypeChannels.ASB"
 let gitOwner = "Azure"
 let gitHome = sprintf "https://github.com/%s" gitOwner
+let gitIO = sprintf "https://%s.github.io/%s" gitOwner gitName
+
 let gitRepo = sprintf "git@github.com:%s/%s.git" gitOwner gitName
 let gitContent = sprintf "https://raw.githubusercontent.com/%s/%s" gitOwner gitName
 
@@ -155,15 +155,17 @@ Target.create "meta" (fun _ ->
     [ "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">"
       "<PropertyGroup>"
       "<Copyright>(c) Microsoft Corporation. All rights reserved.</Copyright>"
-      sprintf "<PackageProjectUrl>%s/%s</PackageProjectUrl>" gitHome gitName
+      "<Authors>Eugene Tolmachev</Authors>"
+      sprintf "<PackageProjectUrl>%s</PackageProjectUrl>" gitIO
+      sprintf "<RepositoryUrl>%s/%s</RepositoryUrl>" gitHome gitName
       "<PackageLicense>MIT</PackageLicense>"
       sprintf "<PackageReleaseNotes>%s</PackageReleaseNotes>" (List.head release.Notes)
       sprintf "<PackageIconUrl>%s/master/docs/content/logo.png</PackageIconUrl>" gitContent
-      "<PackageTags>Azure;Service Bus;Datatype Channel;fsharp</PackageTags>"
+      "<PackageTags>Azure Service Bus;Datatype Channel;fsharp</PackageTags>"
       sprintf "<Version>%s</Version>" (string ver)
-      sprintf "<FsDocsLogoLink>%s/master/docs/content/logo.png</FsDocsLogoLink>" gitContent
-      sprintf "<FsDocsLicenseLink>%s/blob/master/LICENSE.md</FsDocsLicenseLink>" gitRepo
-      sprintf "<FsDocsReleaseNotesLink>%s/blob/master/RELEASE_NOTES.md</FsDocsReleaseNotesLink>" gitRepo
+      sprintf "<FsDocsLogoSource>%s/master/docs/img/logo.png</FsDocsLogoSource>" gitContent
+      sprintf "<FsDocsLicenseLink>%s/%s/blob/master/LICENSE</FsDocsLicenseLink>" gitHome gitName
+      sprintf "<FsDocsReleaseNotesLink>%s/%s/blob/master/RELEASE_NOTES.md</FsDocsReleaseNotesLink>" gitHome gitName
       "<FsDocsNavbarPosition>fixed-right</FsDocsNavbarPosition>"
       "<FsDocsWarnOnMissingDocs>true</FsDocsWarnOnMissingDocs>"
       "<FsDocsTheme>default</FsDocsTheme>"
@@ -183,10 +185,10 @@ Target.create "watchDocs" (fun _ ->
 )
 
 Target.create "releaseDocs" (fun _ ->
-    let tempDocsDir = "temp/gh-pages"
+    let tempDocsDir = "tmp/gh-pages"
     Shell.cleanDir tempDocsDir
     Git.Repository.cloneSingleBranch "" gitRepo "gh-pages" tempDocsDir
-
+    Git.Repository.fullclean tempDocsDir
     Shell.copyRecursive "output" tempDocsDir true |> Trace.tracefn "%A"
     Git.Staging.stageAll tempDocsDir
     Git.Commit.exec tempDocsDir (sprintf "Update generated documentation for version %s" release.NugetVersion)

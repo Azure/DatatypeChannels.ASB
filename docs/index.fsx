@@ -1,6 +1,4 @@
 (*** hide ***)
-// This block of code is omitted in the generated HTML documentation. Use 
-// it to define helpers that you do not want to show in the documentation.
 #I "../tests/DatatypeChannels.ASB.Tests/bin/Release/net5.0/publish"
 #r "Azure.Identity.dll"
 #r "Azure.Core.dll"
@@ -38,7 +36,7 @@ Installing
 <div class="row">
   <div class="span1"></div>
   <div class="span6">
-    <div class="well well-small" id="nuget">
+    <div class="well" id="nuget">
       The DatatypeChannels.ASB library can be <a href="https://nuget.org/packages/DatatypeChannels.ASB">installed from NuGet</a>:
       <pre>dotnet add YOUR_PROJECT package DatatypeChannels.ASB</pre>
     </div>

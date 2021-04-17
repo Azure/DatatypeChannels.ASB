@@ -79,9 +79,11 @@ let publisher = channels.GetPublisher PlainText.toSend (Topic "topic") // long-l
 (** Consumer
 ========================
 Consumer implicitly manages the susbcription every time it's created, updating forwarding and rules as needed. 
-A persistent queue can be setup using one or more subscriptions, with forwarding setup automatically. 
+A persistent queue can be setup using one or more subscriptions, each one will forward to the queue automatically. 
+> Note: a known issue prevents idle detection on subscriptions that have auto-forwarding defined.
+
 `Temporary` queue can be useful for short-lived consumers and is setup with auto-acknowedgments and a guid for a name, it will be deleted once consumer is disposed of.
-Implementing guaranteed processing a `Persistent` queue or a `Subscription` with Ack/Nack messages is recommended.
+Implementing guaranteed processing a `Persistent` queue or a `Subscription` with explicit Ack/Nack of the messages is recommended.
 
 *)
 open Azure.Messaging.ServiceBus.Administration
