@@ -35,7 +35,9 @@ let mkNew (options:ServiceBusReceiverOptions)
                 match! Nullable timeout |> Task.withRetries maxRetries (fun t -> receiver.ReceiveMessageAsync t) with
                 | null -> return None
                 | received ->
-                    let! msg = task {
+                    let! msg =
+                        if options.SubQueue = SubQueue.DeadLetter then ofReceived received |> Some |> Task.FromResult
+                        else task {
                             try return ofReceived received |> Some
                             with ex ->
                                 if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock then
