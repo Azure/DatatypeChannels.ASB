@@ -44,12 +44,26 @@ module internal Subscription =
             if not (isNull options.UserMetadata) then properties.UserMetadata <- options.UserMetadata
             properties
 
+        let equals (options:CreateSubscriptionOptions) (properties:SubscriptionProperties) =
+            properties.LockDuration = options.LockDuration
+            && properties.RequiresSession = options.RequiresSession
+            && properties.DefaultMessageTimeToLive = options.DefaultMessageTimeToLive
+            && properties.AutoDeleteOnIdle = options.AutoDeleteOnIdle
+            && properties.DeadLetteringOnMessageExpiration = options.DeadLetteringOnMessageExpiration
+            && properties.EnableDeadLetteringOnFilterEvaluationExceptions = options.EnableDeadLetteringOnFilterEvaluationExceptions
+            && properties.MaxDeliveryCount = options.MaxDeliveryCount
+            && properties.EnableBatchedOperations = options.EnableBatchedOperations
+            && properties.Status = options.Status
+            && properties.ForwardTo = options.ForwardTo
+            && properties.ForwardDeadLetteredMessagesTo = options.ForwardDeadLetteredMessagesTo
+            && properties.UserMetadata = options.UserMetadata
+
     let createOrUpdate (Log log) (client:ServiceBusAdministrationClient) binding =
         task {
             try
                 let! subscription =
                     client.GetSubscriptionAsync(binding.Subscription.TopicName, binding.Subscription.SubscriptionName) |> Task.map Response.value
-                if binding.Subscription.ForwardTo <> subscription.ForwardTo then
+                if SubscriptionProperties.equals binding.Subscription subscription |> not then
                     log("Updating subscription: {Subscription} on {Topic}", [| subscription.SubscriptionName; subscription.TopicName |])
                     do! client.UpdateSubscriptionAsync (subscription |> SubscriptionProperties.updateFrom binding.Subscription)
                         |> Task.map ignore
