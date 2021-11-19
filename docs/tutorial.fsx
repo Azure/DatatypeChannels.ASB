@@ -1,9 +1,8 @@
 (*** hide ***)
-#I "../tests/DatatypeChannels.ASB.Tests/bin/Release/net5.0/publish"
+#I "../tests/DatatypeChannels.ASB.Tests/bin/Release/net6.0/publish"
 #r "Azure.Core.dll"
 #r "Azure.Identity.dll"
 #r "DatatypeChannels.ASB.dll"
-#r "Ply.dll"
 #r "Azure.Messaging.ServiceBus.dll"
 
 open System
@@ -88,31 +87,29 @@ Implementing guaranteed processing a `Persistent` queue or a `Subscription` with
 *)
 open Azure.Messaging.ServiceBus.Administration
 
-// define the a Subscription binding with no filters
-let src = Subscription { Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }
+task {
+    // define the a Subscription binding with no filters
+    let src = Subscription { Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }
 
-// create a consumer, specifying the convertion function from bus primitives
-let consumer = channels.GetConsumer PlainText.ofReceived src
+    // create a consumer, specifying the convertion function from bus primitives
+    let! consumer = channels.GetConsumer PlainText.ofReceived src
 
-// another example of a source - deadletter queue of the subscription defined above
-// this entity must exist, DatatypeChannels.ASB does not manage deadletter sources
-let dlq = DeadLetter "mytopic/Subscriptions/mysub" 
-let dlqConsumer = channels.GetConsumer PlainText.ofReceived dlq
+    // another example of a source - deadletter queue of the subscription defined above
+    // this entity must exist, DatatypeChannels.ASB does not manage deadletter sources
+    let dlq = DeadLetter "mytopic/Subscriptions/mysub" 
+    let! dlqConsumer = channels.GetConsumer PlainText.ofReceived dlq
 
-// define the a Persistent queue binding
-let consumer = Persistent (CreateQueueOptions("myqueue", LockDuration = TimeSpan.FromMinutes 6.),
-                           [{ Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }])
+    // define the a Persistent queue binding
+    let! consumer = Persistent (CreateQueueOptions("myqueue", LockDuration = TimeSpan.FromMinutes 6.),
+                                [{ Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }])
 
-// define a Temporary queue binding, the messages will be auto-ack'ed
-let tmp = Temporary [{ Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }]
+    // define a Temporary queue binding, the messages will be auto-ack'ed
+    let tmp = Temporary [{ Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }]
 
 (**
 Once created, we can start polling them, specifying the timeout:
 
 *)
-open FSharp.Control.Tasks.Builders
-
-task {
     let! received = TimeSpan.FromSeconds 3. |> consumer.Get
     // for this example - negative acknowledge the message so that it's routed to the deadletters
     do! consumer.Nack received.Value.Id
