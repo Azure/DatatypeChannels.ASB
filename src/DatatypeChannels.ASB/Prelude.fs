@@ -13,33 +13,16 @@ module Task =
 
     /// Convert `Task` to `Task<unit>`
     let ignore (t: Task) =
-        let rec mapResolved (task: Task) =
-            match task.Status with
-            | TaskStatus.RanToCompletion -> Task.FromResult(())
-            | TaskStatus.Faulted -> Task.FromException<unit> (flattenExns task.Exception)
-            | TaskStatus.Canceled -> Task.FromCanceled<unit> CancellationToken.None
-            | _ -> task.ContinueWith(mapResolved).Unwrap()
-        mapResolved t
+        task { return! t }
 
     /// Monadic map
     let map (continuation: 'a -> 'b) (t: Task<'a>) =
-        let rec mapResolved (task: Task<'a>) =
-            match task.Status with
-            | TaskStatus.RanToCompletion -> try Task.FromResult(continuation task.Result) with ex -> Task.FromException<'b> ex 
-            | TaskStatus.Faulted -> Task.FromException<'b> (flattenExns task.Exception)
-            | TaskStatus.Canceled -> Task.FromCanceled<'b> CancellationToken.None
-            | _ -> task.ContinueWith(mapResolved).Unwrap()
-        mapResolved t
+        task { let! x = t in return continuation x }
 
     /// Monadic bind
     let bind (continuation: 'a -> Task<'b>) (t: Task<'a>) : Task<'b> =
-        let rec mapResolved (task: Task<'a>) =
-            match task.Status with
-            | TaskStatus.RanToCompletion -> task.ContinueWith(Func<Task<'a>,_> (fun t -> t.Result |> continuation)).Unwrap()
-            | TaskStatus.Faulted -> Task.FromException<'b> (flattenExns task.Exception)
-            | TaskStatus.Canceled -> Task.FromCanceled<'b> CancellationToken.None
-            | _ -> task.ContinueWith(mapResolved).Unwrap()
-        mapResolved t
+        task { let! x = t in return! continuation x }
+        
 
     /// Retry the task up to `n` times with progressive backoff
     let withRetries (n: uint16) (mkTask: 'a -> Task<'r>) (arg: 'a) =
