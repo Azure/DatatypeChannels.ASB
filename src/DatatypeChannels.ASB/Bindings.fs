@@ -4,7 +4,6 @@ open System
 open System.Threading.Tasks
 open Azure.Messaging.ServiceBus
 open Azure.Messaging.ServiceBus.Administration
-open FSharp.Control.Tasks.Builders
 
 [<RequireQualifiedAccessAttribute>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
@@ -65,9 +64,7 @@ module internal Subscription =
                     client.GetSubscriptionAsync(binding.Subscription.TopicName, binding.Subscription.SubscriptionName) |> Task.map Response.value
                 if SubscriptionProperties.equals binding.Subscription subscription |> not then
                     log("Updating subscription: {Subscription} on {Topic}", [| subscription.SubscriptionName; subscription.TopicName |])
-                    do! client.UpdateSubscriptionAsync (subscription |> SubscriptionProperties.updateFrom binding.Subscription)
-                        |> Task.map ignore
-
+                    let! _ = client.UpdateSubscriptionAsync (subscription |> SubscriptionProperties.updateFrom binding.Subscription) in ()
                 match binding.Rule with
                 | None -> ()
                 | Some rule ->
@@ -75,8 +72,7 @@ module internal Subscription =
                         client.GetRuleAsync(binding.Subscription.TopicName, binding.Subscription.SubscriptionName, rule.Name) |> Task.map Response.value
                     if rule.Name = existingRule.Name && (rule.Filter <> existingRule.Filter || rule.Action <> existingRule.Action) then
                         log("Updating subscription rule: {Rule} ({ExistingFilter} -> {Filter})", [| rule.Name; existingRule.Filter.ToString(); rule.Filter.ToString() |])
-                        do! client.UpdateRuleAsync(binding.Subscription.TopicName, binding.Subscription.SubscriptionName, existingRule |> RuleProperties.updateFrom rule)
-                            |> Task.map ignore
+                        let! _ = client.UpdateRuleAsync(binding.Subscription.TopicName, binding.Subscription.SubscriptionName, existingRule |> RuleProperties.updateFrom rule) in ()
                 return subscription
             with :? ServiceBusException as ex when ex.Reason = ServiceBusFailureReason.MessagingEntityNotFound ->
                 try
@@ -97,11 +93,11 @@ module internal Subscription =
         let bound = ref None
         fun cont ->
             fun client -> task {
-                match !bound with
+                match bound.Value with
                 | Some name -> return name
                 | _ ->
                     do! createOrUpdate log client binding
-                    bound := Some binding.Subscription.SubscriptionName
+                    bound.Value <- Some binding.Subscription.SubscriptionName
                     return sprintf "%s/Subscriptions/%s" binding.Subscription.TopicName binding.Subscription.SubscriptionName
             }
             |> withClient
@@ -132,7 +128,7 @@ module internal Queue =
                 if queue.RequiresDuplicateDetection <> options.RequiresDuplicateDetection ||
                    queue.RequiresSession <> options.RequiresSession then
                    log("Recreating queue: {Queue}", [| queue.Name |])
-                   do! client.DeleteQueueAsync options.Name |> Task.map ignore
+                   let! _ = client.DeleteQueueAsync options.Name 
                    return! client.CreateQueueAsync options |> Task.map Response.value
                 else if queue.LockDuration <> options.LockDuration ||
                         queue.DefaultMessageTimeToLive <> options.DefaultMessageTimeToLive ||
@@ -160,14 +156,14 @@ module internal Queue =
         let bound = ref None
         fun cont ->
             fun client -> task {
-                match !bound with
+                match bound.Value with
                 | Some name -> return name
                 | _ ->
                     do! createOrUpdate log client queueOptions
                     for binding in bindings do
                         binding.Subscription.ForwardTo <- queueOptions.Name
                         do! Subscription.createOrUpdate log client binding
-                    bound := Some queueOptions.Name
+                    bound.Value <- Some queueOptions.Name
                     return queueOptions.Name
             }
             |> withClient

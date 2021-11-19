@@ -58,7 +58,7 @@ type Channels =
     inherit IDisposable
 
     /// Construct a consumer, using specified message type, the source to bind to and the assember.
-    abstract GetConsumer<'msg> : OfReceived<'msg> -> Source -> Consumer<'msg>
+    abstract GetConsumer<'msg> : OfReceived<'msg> -> Source -> Task<Consumer<'msg>>
 
     /// Construct a publisher for the specified message type and disassembler.
     abstract GetPublisher<'msg> : ToSend<'msg> -> Topic -> Publisher<'msg>

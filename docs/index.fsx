@@ -1,13 +1,11 @@
 (*** hide ***)
-#I "../tests/DatatypeChannels.ASB.Tests/bin/Release/net5.0/publish"
+#I "../tests/DatatypeChannels.ASB.Tests/bin/Release/net6.0/publish"
 #r "Azure.Identity.dll"
 #r "Azure.Core.dll"
 #r "DatatypeChannels.ASB.dll"
-#r "Ply.dll"
 #r "Azure.Messaging.ServiceBus.dll"
 
 open System
-open FSharp.Control.Tasks.Builders
 open Azure.Messaging.ServiceBus.Administration
 
 (**
@@ -51,13 +49,13 @@ let channels = Channels.fromFqdn "mynamespace.servicebus.windows.net"
 // define the "source" - subscription and routing rules, together called "binding"
 let src = Subscription { Subscription = CreateSubscriptionOptions("mytopic", "mysub", MaxDeliveryCount = 1), Rule = None }
 
-// create a consumer, specifying the convertion function from bus primitives
-let consumer = channels.GetConsumer PlainText.ofReceived src // see the tutorial for details
-
-// create a publisher, specifying the target topic and the conversion function to bus primitives
-let publisher = channels.GetPublisher PlainText.toSend (Topic "mytopic")  // see the tutorial for details
-Threading.Thread.Sleep 5_000 // majic number - this is how long it takes the topic to start routing messages to new subscriptions
 task {
+    // create a consumer, specifying the convertion function from bus primitives
+    let! consumer = channels.GetConsumer PlainText.ofReceived src // see the tutorial for details
+
+    // create a publisher, specifying the target topic and the conversion function to bus primitives
+    let publisher = channels.GetPublisher PlainText.toSend (Topic "mytopic")  // see the tutorial for details
+    do! Task.Delay 5_000 // majic number - this is how long it takes the topic to start routing messages to new subscriptions
     do! publisher |> Publisher.publish "test-payload"
     let! received = TimeSpan.FromSeconds 3. |> consumer.Get
     printfn "Received: %A" received

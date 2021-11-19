@@ -17,7 +17,7 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 
 ## Building
 Pre-requisites:
-- .NET SDK 5.0
+- .NET SDK 6.0
 - Azure CLI
 
 When building for the first time:

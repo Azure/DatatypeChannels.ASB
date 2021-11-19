@@ -1,5 +1,5 @@
 pool:
-    vmImage: 'ubuntu-16.04'
+    vmImage: 'ubuntu-20.04'
 variables:
     BUILD_NUMBER: $[counter('buildCounter',1)]
     NUGET_REPO_URL: https://api.nuget.org/v3/index.json
@@ -12,7 +12,7 @@ trigger:
 steps:
     - task: UseDotNet@2
       inputs:
-        version: '5.0.100'
+        version: '6.0.100'
 
     - task: DotNetCoreCLI@2
       displayName: "Restore tools"
