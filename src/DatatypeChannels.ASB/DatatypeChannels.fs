@@ -27,7 +27,7 @@ module Channels =
         let withAdminClient cont = cont adminClient.Value
 
         { new Channels with
-            member __.GetConsumer<'msg> ofRecevied source : Consumer<'msg> =
+            member __.GetConsumer<'msg> ofRecevied source : Task<Consumer<'msg>> =
                 let withBindings, receiveOptions, renew =
                     match source with
                     | Subscription binding ->

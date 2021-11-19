@@ -14,72 +14,74 @@ let mkNew (options:ServiceBusReceiverOptions)
           withBinding =
     let ctxRef = ref Option<ServiceBusReceiver * ConcurrentDictionary<string, ServiceBusReceivedMessage * Task>>.None
     let withCtx cont =
-        match !ctxRef with
+        match ctxRef.Value with
         | Some ((receiver,_) as ctx) when not receiver.IsClosed -> Task.FromResult ctx
         | _ -> fun (name:Task<_>) -> task {
                     let! name = name
                     let receiver = withClient (fun client -> client.CreateReceiver(name, options))
                     ctxRef.Value <- Some (receiver, ConcurrentDictionary())
-                    return (!ctxRef).Value
+                    return ctxRef.Value.Value
                }
                |> withBinding
         |> cont
 
-    (withCtx (Task.map ignore)).Wait() // force the subscription to occur
+    task {
+        do! withCtx (Task.map ignore) // force the subscription to occur
 
-    { new Consumer<'T> with
-        member __.Get timeout =
-            fun ctx -> task {
-                let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
-                match! Nullable timeout |> Task.withRetries maxRetries (fun t -> receiver.ReceiveMessageAsync t) with
-                | null -> return None
-                | received ->
-                    let! msg =
-                        if options.SubQueue = SubQueue.DeadLetter then ofReceived received |> Some |> Task.FromResult
-                        else task {
-                            try return ofReceived received |> Some
-                            with ex ->
-                                if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock then
-                                    do! receiver.DeadLetterMessageAsync (received, ex.Message)
-                                return None
-                        }
-                    return msg |> Option.map (fun msg -> 
-                        let find _ = match messages.TryGetValue received.LockToken with | true, m -> Some (fst m) | _ -> None
-                        if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock 
-                            && not (messages.TryAdd(received.LockToken, (received, startRenewal receiver find))) then failwith "Unable to add the message"
-                        { Msg = msg; Id = received.LockToken })
-            }
-            |> withCtx
+        return { new Consumer<'T> with
+            member __.Get timeout =
+                fun ctx -> task {
+                    let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
+                    match! Nullable timeout |> Task.withRetries maxRetries (fun t -> receiver.ReceiveMessageAsync t) with
+                    | null -> return None
+                    | received ->
+                        let! msg =
+                            if options.SubQueue = SubQueue.DeadLetter then ofReceived received |> Some |> Task.FromResult
+                            else task {
+                                try return ofReceived received |> Some
+                                with ex ->
+                                    if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock then
+                                        do! receiver.DeadLetterMessageAsync (received, ex.Message)
+                                    return None
+                            }
+                        return msg |> Option.map (fun msg -> 
+                            let find _ = match messages.TryGetValue received.LockToken with | true, m -> Some (fst m) | _ -> None
+                            if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock 
+                                && not (messages.TryAdd(received.LockToken, (received, startRenewal receiver find))) then failwith "Unable to add the message"
+                            { Msg = msg; Id = received.LockToken })
+                }
+                |> withCtx
 
-        member __.Ack receivedId =
-            withCtx (fun ctx -> task {
-                let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
-                match messages.TryGetValue receivedId with
-                | true, received ->
-                    do! fst received |> Task.withRetries maxRetries (receiver.CompleteMessageAsync >> Task.ignore)
-                    messages.TryRemove receivedId |> ignore
-                    do! snd received
-                | _ -> failwithf "Message is not in the current session: %s" receivedId
-            })
+            member __.Ack receivedId =
+                withCtx (fun ctx -> task {
+                    let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
+                    match messages.TryGetValue receivedId with
+                    | true, received ->
+                        do! fst received |> Task.withRetries maxRetries (receiver.CompleteMessageAsync >> Task.ignore)
+                        messages.TryRemove receivedId |> ignore
+                        do! snd received
+                    | _ -> failwithf "Message is not in the current session: %s" receivedId
+                })
 
-        member __.Nack receivedId =
-            withCtx(fun ctx -> task {
-                let! (receiver: ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
-                match messages.TryGetValue receivedId with
-                | true, received ->
-                    do! fst received |> Task.withRetries maxRetries (receiver.AbandonMessageAsync >> Task.ignore)
-                    messages.TryRemove receivedId |> ignore
-                    do! snd received
-                | _ -> failwithf "Message is not in the current session: %s" receivedId
-            })
+            member __.Nack receivedId =
+                withCtx(fun ctx -> task {
+                    let! (receiver: ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
+                    match messages.TryGetValue receivedId with
+                    | true, received ->
+                        do! fst received |> Task.withRetries maxRetries (receiver.AbandonMessageAsync >> Task.ignore)
+                        messages.TryRemove receivedId |> ignore
+                        do! snd received
+                    | _ -> failwithf "Message is not in the current session: %s" receivedId
+                })
 
-        member __.Dispose() =
-            match !ctxRef with
-            | Some (receiver,messages) ->
-               messages.Clear()
-               receiver.DisposeAsync().AsTask().Wait()
-               ctxRef.Value <- None
-            | _ -> ()
+            member __.Dispose() =
+                match ctxRef.Value with
+                | Some (receiver,messages) ->
+                messages.Clear()
+                receiver.DisposeAsync().AsTask().Wait()
+                ctxRef.Value <- None
+                | _ -> ()
+        }
     }
 
 module LockDuration =
