@@ -2,7 +2,6 @@
 
 open System
 open System.Threading.Tasks
-open FSharp.Control.Tasks.Builders
 open Azure.Messaging.ServiceBus
 open Azure.Messaging.ServiceBus.Administration
 

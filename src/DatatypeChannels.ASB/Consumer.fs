@@ -5,7 +5,6 @@ open System
 open System.Threading.Tasks
 open System.Collections.Concurrent
 open Azure.Messaging.ServiceBus
-open FSharp.Control.Tasks.Builders
 
 let mkNew (options:ServiceBusReceiverOptions)
           (maxRetries: uint16)
@@ -20,7 +19,7 @@ let mkNew (options:ServiceBusReceiverOptions)
         | _ -> fun (name:Task<_>) -> task {
                     let! name = name
                     let receiver = withClient (fun client -> client.CreateReceiver(name, options))
-                    ctxRef := Some (receiver, ConcurrentDictionary())
+                    ctxRef.Value <- Some (receiver, ConcurrentDictionary())
                     return (!ctxRef).Value
                }
                |> withBinding
@@ -53,7 +52,7 @@ let mkNew (options:ServiceBusReceiverOptions)
             |> withCtx
 
         member __.Ack receivedId =
-            fun ctx -> task {
+            withCtx (fun ctx -> task {
                 let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                 match messages.TryGetValue receivedId with
                 | true, received ->
@@ -61,11 +60,10 @@ let mkNew (options:ServiceBusReceiverOptions)
                     messages.TryRemove receivedId |> ignore
                     do! snd received
                 | _ -> failwithf "Message is not in the current session: %s" receivedId
-            }
-            |> withCtx
+            })
 
         member __.Nack receivedId =
-            fun ctx -> task {
+            withCtx(fun ctx -> task {
                 let! (receiver: ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                 match messages.TryGetValue receivedId with
                 | true, received ->
@@ -73,15 +71,14 @@ let mkNew (options:ServiceBusReceiverOptions)
                     messages.TryRemove receivedId |> ignore
                     do! snd received
                 | _ -> failwithf "Message is not in the current session: %s" receivedId
-            }
-            |> withCtx
+            })
 
         member __.Dispose() =
             match !ctxRef with
             | Some (receiver,messages) ->
                messages.Clear()
                receiver.DisposeAsync().AsTask().Wait()
-               ctxRef := None
+               ctxRef.Value <- None
             | _ -> ()
     }
 

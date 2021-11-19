@@ -1,7 +1,6 @@
 [<RequireQualifiedAccessAttribute>]
 module DatatypeChannels.ASB.Publisher
 open Azure.Messaging.ServiceBus
-open FSharp.Control.Tasks.Builders
 
 let internal mkNew retries (ToSend toSend) withSender =
     let send msg =

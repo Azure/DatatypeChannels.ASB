@@ -4,7 +4,6 @@ open System
 open System.Threading.Tasks
 open Azure.Messaging.ServiceBus
 open Azure.Messaging.ServiceBus.Administration
-open FSharp.Control.Tasks.Builders
 
 [<RequireQualifiedAccessAttribute>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
