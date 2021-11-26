@@ -7,7 +7,6 @@ open System.Collections.Concurrent
 open Azure.Messaging.ServiceBus
 
 let mkNew (options:ServiceBusReceiverOptions)
-          (maxRetries: uint16)
           (startRenewal: ServiceBusReceiver -> (unit -> ServiceBusReceivedMessage option) -> Task)
           (OfReceived ofReceived)
           (withClient: (ServiceBusClient -> _) -> _)
@@ -32,7 +31,7 @@ let mkNew (options:ServiceBusReceiverOptions)
             member __.Get timeout =
                 fun ctx -> task {
                     let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
-                    match! Nullable timeout |> Task.withRetries maxRetries (fun t -> receiver.ReceiveMessageAsync t) with
+                    match! receiver.ReceiveMessageAsync timeout with
                     | null -> return None
                     | received ->
                         let! msg =
@@ -57,7 +56,7 @@ let mkNew (options:ServiceBusReceiverOptions)
                     let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                     match messages.TryGetValue receivedId with
                     | true, received ->
-                        do! fst received |> Task.withRetries maxRetries (receiver.CompleteMessageAsync >> Task.ignore)
+                        do! receiver.CompleteMessageAsync (fst received)
                         messages.TryRemove receivedId |> ignore
                         do! snd received
                     | _ -> failwithf "Message is not in the current session: %s" receivedId
@@ -68,7 +67,7 @@ let mkNew (options:ServiceBusReceiverOptions)
                     let! (receiver: ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                     match messages.TryGetValue receivedId with
                     | true, received ->
-                        do! fst received |> Task.withRetries maxRetries (receiver.AbandonMessageAsync >> Task.ignore)
+                        do! receiver.AbandonMessageAsync (fst received)
                         messages.TryRemove receivedId |> ignore
                         do! snd received
                     | _ -> failwithf "Message is not in the current session: %s" receivedId
@@ -77,32 +76,32 @@ let mkNew (options:ServiceBusReceiverOptions)
             member __.Dispose() =
                 match ctxRef.Value with
                 | Some (receiver,messages) ->
-                messages.Clear()
-                receiver.DisposeAsync().AsTask().Wait()
-                ctxRef.Value <- None
+                    messages.Clear()
+                    receiver.DisposeAsync().AsTask().Wait()
+                    ctxRef.Value <- None
                 | _ -> ()
         }
     }
 
 module LockDuration =
     let fiveMinutes = TimeSpan.FromMinutes 5.
-    let private renew (delay: TimeSpan) (retries: uint16) (r: ServiceBusReceiver) (getMsg: unit -> ServiceBusReceivedMessage option) = 
+    let private renew (delay: TimeSpan) (r: ServiceBusReceiver) (getMsg: unit -> ServiceBusReceivedMessage option) = 
         Task.Run(fun _ ->
             task {
                 do! Task.Delay delay
                 for msg in Seq.initInfinite (fun _ -> getMsg()) |> Seq.takeWhile Option.isSome |> Seq.choose id do
-                    do! msg |> Task.withRetries retries (fun m -> r.RenewMessageLockAsync m |> Task.ignore)
+                    do! r.RenewMessageLockAsync msg
                     do! Task.Delay delay
             } :> Task)
 
     let noRenew _ _ = Task.CompletedTask
 
     /// Update the options to maximum valid value and return a function to setup renewal Task
-    let makeRenewable (retries: uint16) lockDuration =
+    let makeRenewable lockDuration =
         let renewalPeriod = 
             if lockDuration <= fiveMinutes then None
             else Some (TimeSpan.FromSeconds 10.)
         match renewalPeriod with
         | Some ts ->
-            renew ts retries
+            renew ts
         | _ -> noRenew
