@@ -29,7 +29,7 @@ let mkNew (options:ServiceBusReceiverOptions)
 
         return { new Consumer<'T> with
             member __.Get timeout =
-                fun ctx -> backgroundTask {
+                withCtx <| fun ctx -> backgroundTask {
                     let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                     match! receiver.ReceiveMessageAsync timeout with
                     | null -> return None
@@ -49,7 +49,6 @@ let mkNew (options:ServiceBusReceiverOptions)
                                 && not (messages.TryAdd(received.LockToken, (received, startRenewal receiver find))) then failwith "Unable to add the message"
                             { Msg = msg; Id = received.LockToken })
                 }
-                |> withCtx
 
             member __.Ack receivedId =
                 withCtx (fun ctx -> backgroundTask {
