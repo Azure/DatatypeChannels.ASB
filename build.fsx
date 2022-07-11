@@ -62,7 +62,7 @@ module Az =
     let currentUserId () =
         query "ad signed-in-user show --query objectId -o tsv" "." (Parse.plain >> Guid)
     let currentSpId principalId =
-        query (sprintf "ad sp show --id %O --query objectId -o tsv" principalId) "." (Parse.plain >> Guid)
+        query (sprintf "ad sp show --id %O --query id -o tsv" principalId) "." (Parse.plain >> Guid)
 
 module Settings =
     open Microsoft.Extensions.Configuration
