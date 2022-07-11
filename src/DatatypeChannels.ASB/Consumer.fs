@@ -15,7 +15,7 @@ let mkNew (options:ServiceBusReceiverOptions)
     let withCtx cont =
         match ctxRef.Value with
         | Some ((receiver,_) as ctx) when not receiver.IsClosed -> Task.FromResult ctx
-        | _ -> fun (name:Task<_>) -> task {
+        | _ -> fun (name:Task<_>) -> backgroundTask {
                     let! name = name
                     let receiver = withClient (fun client -> client.CreateReceiver(name, options))
                     ctxRef.Value <- Some (receiver, ConcurrentDictionary())
@@ -24,19 +24,19 @@ let mkNew (options:ServiceBusReceiverOptions)
                |> withBinding
         |> cont
 
-    task {
+    backgroundTask {
         do! withCtx (Task.map ignore) // force the subscription to occur
 
         return { new Consumer<'T> with
             member __.Get timeout =
-                fun ctx -> task {
+                withCtx <| fun ctx -> backgroundTask {
                     let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                     match! receiver.ReceiveMessageAsync timeout with
                     | null -> return None
                     | received ->
                         let! msg =
                             if options.SubQueue = SubQueue.DeadLetter then ofReceived received |> Some |> Task.FromResult
-                            else task {
+                            else backgroundTask {
                                 try return ofReceived received |> Some
                                 with ex ->
                                     if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock then
@@ -49,10 +49,9 @@ let mkNew (options:ServiceBusReceiverOptions)
                                 && not (messages.TryAdd(received.LockToken, (received, startRenewal receiver find))) then failwith "Unable to add the message"
                             { Msg = msg; Id = received.LockToken })
                 }
-                |> withCtx
 
             member __.Ack receivedId =
-                withCtx (fun ctx -> task {
+                withCtx (fun ctx -> backgroundTask {
                     let! (receiver:ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                     match messages.TryGetValue receivedId with
                     | true, received ->
@@ -63,7 +62,7 @@ let mkNew (options:ServiceBusReceiverOptions)
                 })
 
             member __.Nack receivedId =
-                withCtx(fun ctx -> task {
+                withCtx(fun ctx -> backgroundTask {
                     let! (receiver: ServiceBusReceiver, messages: ConcurrentDictionary<_,_>) = ctx
                     match messages.TryGetValue receivedId with
                     | true, received ->
@@ -87,7 +86,7 @@ module LockDuration =
     let fiveMinutes = TimeSpan.FromMinutes 5.
     let private renew (delay: TimeSpan) (r: ServiceBusReceiver) (getMsg: unit -> ServiceBusReceivedMessage option) = 
         Task.Run(fun _ ->
-            task {
+            backgroundTask {
                 do! Task.Delay delay
                 for msg in Seq.initInfinite (fun _ -> getMsg()) |> Seq.takeWhile Option.isSome |> Seq.choose id do
                     do! r.RenewMessageLockAsync msg

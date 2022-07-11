@@ -57,7 +57,7 @@ module Channels =
                 |> Publisher.mkNew toSend
 
             member __.UsingPublisher<'msg> toSend (Topic topic) (cont:Publisher<'msg> -> Task<unit>) =
-                task {
+                backgroundTask {
                     let sender = client.Value.CreateSender topic
                     do!
                         fun send -> send sender

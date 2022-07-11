@@ -58,7 +58,7 @@ module internal Subscription =
             && properties.UserMetadata = options.UserMetadata
 
     let createOrUpdate (Log log) (client:ServiceBusAdministrationClient) binding =
-        task {
+        backgroundTask {
             try
                 let! subscription =
                     client.GetSubscriptionAsync(binding.Subscription.TopicName, binding.Subscription.SubscriptionName) |> Task.map Response.value
@@ -92,7 +92,7 @@ module internal Subscription =
     let withBinding log (withClient: (ServiceBusAdministrationClient -> _) -> _) (binding: Binding) =
         let bound = ref None
         fun cont ->
-            fun client -> task {
+            fun client -> backgroundTask {
                 match bound.Value with
                 | Some name -> return name
                 | _ ->
@@ -122,7 +122,7 @@ module internal Queue =
             properties
 
     let internal createOrUpdate (Log log) (client:ServiceBusAdministrationClient) (options: CreateQueueOptions) =
-        task {
+        backgroundTask {
             try
                 let! queue = client.GetQueueAsync options.Name |> Task.map Response.value
                 if queue.RequiresDuplicateDetection <> options.RequiresDuplicateDetection ||
@@ -155,7 +155,7 @@ module internal Queue =
     let withBindings log (withClient: (ServiceBusAdministrationClient -> _) -> _) (queueOptions: CreateQueueOptions) (bindings: #seq<Binding>) =
         let bound = ref None
         fun cont ->
-            fun client -> task {
+            fun client -> backgroundTask {
                 match bound.Value with
                 | Some name -> return name
                 | _ ->
