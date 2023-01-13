@@ -30,7 +30,7 @@ steps:
         addSpnToEnvironment: true
         scriptLocation: 'inlineScript'
         ${{ if startsWith(variables['Build.SourceBranch'], 'refs/tags') }}:
-          inlineScript: 'dotnet fake build -t release'
+          inlineScript: 'dotnet fsi build.fsx -t release'
         ${{ if not(startsWith(variables['Build.SourceBranch'], 'refs/tags')) }}:
-          inlineScript: 'dotnet fake build -t ci'
+          inlineScript: 'dotnet fsi build.fsx -t ci'
             

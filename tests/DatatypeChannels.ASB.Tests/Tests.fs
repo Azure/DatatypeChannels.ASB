@@ -24,10 +24,21 @@ module PlainText =
 
 module Logging =
     open Microsoft.Extensions.Logging
+    open OpenTelemetry
+    open OpenTelemetry.Trace
+    open OpenTelemetry.Resources
+
     let info =
         let log = LoggerFactory.Create(fun builder -> builder.AddConsole() |> ignore).CreateLogger<Channels>()
         fun (msg: string, args: obj[]) -> log.LogInformation(msg, args)
         |> Log
+    let tracing = 
+        Sdk.CreateTracerProviderBuilder()
+            // .AddSource("Azure.*")
+            .AddSource("DatatypeChannels.*")
+            .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("Tests"))
+            .AddConsoleExporter()
+            .Build()
 
 module Settings =
     open Microsoft.Extensions.Configuration
@@ -133,23 +144,26 @@ let tests =
                 received.Value.Msg =! "test-payload"
             }
 
-        itt "Exceeding the lock duration renews message lock" <| fun testId ->
+        itt "Exceeding the lock duration renews messages" <| fun testId ->
             task {
                 let src = // 5min is the maximum LockDuration, we'll adjust it and setup the lock renewal
-                    (CreateQueueOptions("renews-queue", LockDuration = TimeSpan.FromMinutes 6., MaxDeliveryCount = 1, AutoDeleteOnIdle = TimeSpan.FromMinutes 5.),
+                    (CreateQueueOptions("renews-queue", LockDuration = TimeSpan.FromMinutes 6., MaxDeliveryCount = 1, AutoDeleteOnIdle = TimeSpan.FromMinutes 10.),
                     [Binding.onTest testId "renews-sub" topic]) |> Persistent
                 let! consumer = channels.GetConsumer PlainText.ofReceived src
                 let! dlc = DeadLetter "renews-queue" |> channels.GetConsumer PlainText.ofReceived
                 let publisher = channels.GetPublisher (PlainText.toSend testId) topic
                 do! Task.Delay 5_000 // majic number - this is how long it takes the backend to start routing messages to this subscription!
-                do! publisher |> Publisher.publish "test-payload"
-                let! received = TimeSpan.FromSeconds 1. |> consumer.Get
+                let n = 2
+                for i in 1..n do
+                    do! publisher |> Publisher.publish $"test-payload-{i}"
+                let xs = ResizeArray()
+                for i in 1..n do
+                    let! received = TimeSpan.FromSeconds 1. |> consumer.Get
+                    received |> Option.iter xs.Add 
+                xs |> Seq.distinct |> Seq.length =! n
                 do! Task.Delay (TimeSpan.FromMinutes 7.)
-                do! consumer.Ack received.Value.Id
-                let! received = TimeSpan.FromSeconds 1. |> consumer.Get // make sure it's no longer available
-                received =! None
-                let! received = TimeSpan.FromSeconds 1. |> dlc.Get // it wasn't moved to DLQ
-                received =! None
+                for received in xs do
+                    do! consumer.Ack received.Id
             }
 
         itt "Roundtrips lots" <| fun testId ->

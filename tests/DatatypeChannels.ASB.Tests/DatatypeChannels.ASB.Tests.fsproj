@@ -24,5 +24,7 @@
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.8.3" />
         <PackageReference Include="Unquote" Version="5.0.0" />
         <PackageReference Include="YoloDev.Expecto.TestSdk" Version="0.11.1" />
+        <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.*" />
+        <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.0.0-rc9.5" />
     </ItemGroup>
 </Project>

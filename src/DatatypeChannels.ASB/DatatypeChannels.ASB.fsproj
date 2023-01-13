@@ -20,13 +20,14 @@
   <ItemGroup>
     <Compile Include="Api.fs" />
     <Compile Include="Prelude.fs" />
+    <Compile Include="Diagnostics.fs" />
     <Compile Include="Consumer.fs" />
     <Compile Include="Publisher.fs" />
     <Compile Include="Bindings.fs" />
     <Compile Include="DatatypeChannels.fs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="FSharp.Core" Version="6.0.6" />
+    <PackageReference Update="FSharp.Core" Version="6.0.6" />
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.7.0" />
     <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" Version="5.0.0" />
   </ItemGroup>
