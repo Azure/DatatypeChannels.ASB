@@ -2,17 +2,36 @@
 module internal DatatypeChannels.ASB.Consumer
 
 open System
+open System.Threading
 open System.Threading.Tasks
 open System.Collections.Concurrent
 open System.Diagnostics
 open Azure.Messaging.ServiceBus
 
+type internal MessageContext =
+    { Message: ServiceBusReceivedMessage
+      CancellationTokenSource: CancellationTokenSource
+      Activity: Activity
+      Reciever: ServiceBusReceiver }
+    member x.Close() =
+        if not x.CancellationTokenSource.IsCancellationRequested then x.CancellationTokenSource.Cancel()
+        x.Activity.Stop()
+
+    static member From (msg: ServiceBusReceivedMessage)
+                       (activity: Activity)
+                       (reciever: ServiceBusReceiver) =
+        { Message = msg
+          Activity = activity
+          CancellationTokenSource = new CancellationTokenSource()
+          Reciever =  reciever }
+
+
 let mkNew (options:ServiceBusReceiverOptions)
-          (startRenewal: ServiceBusReceiver -> (unit -> (Activity * ServiceBusReceivedMessage) option) -> Task)
+          (startRenewal: MessageContext -> Task)
           (OfReceived ofReceived)
           (withClient: (ServiceBusClient -> _) -> _)
           withBinding =
-    let ctxRef = ref Option<ServiceBusReceiver * (unit -> Activity) * ConcurrentDictionary<string, ServiceBusReceivedMessage * Activity * Task>>.None
+    let ctxRef = ref Option<ServiceBusReceiver * (unit -> Activity) * ConcurrentDictionary<string, MessageContext>>.None
     let activitySource = Diagnostics.mkActivitySource "Consumer"
     let withCtx cont =
         match ctxRef.Value with
@@ -33,7 +52,7 @@ let mkNew (options:ServiceBusReceiverOptions)
         return { new Consumer<'T> with
             member __.Get timeout =
                 withCtx <| fun ctx -> backgroundTask {
-                    let! (receiver:ServiceBusReceiver, startActivity, messages: ConcurrentDictionary<_,_>) = ctx
+                    let! (receiver:ServiceBusReceiver, startActivity, msgCtxs: ConcurrentDictionary<_,_>) = ctx
                     let activity = startActivity()
                     match! receiver.ReceiveMessageAsync timeout with
                     | null -> return None
@@ -50,71 +69,70 @@ let mkNew (options:ServiceBusReceiverOptions)
                                     return None
                             }
                         return msg |> Option.map (fun msg -> 
-                            let find _ = match messages.TryGetValue received.LockToken with | true, (msg,activity,_) -> Some (activity,msg) | _ -> None
-                            if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock 
-                                && not (messages.TryAdd(received.LockToken, (received, activity, startRenewal receiver find))) then failwith "Unable to add the message"
+                            let msgCtx = MessageContext.From received activity receiver
+                            if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock then
+                                if msgCtxs.TryAdd(received.LockToken, msgCtx) then startRenewal msgCtx |> ignore
+                                else failwith "Unable to add the message"
                             { Msg = msg; Id = received.LockToken })
                 }
 
             member __.Ack receivedId =
                 withCtx (fun ctx -> backgroundTask {
-                    let! (receiver:ServiceBusReceiver, _, messages: ConcurrentDictionary<_,_>) = ctx
-                    match messages.TryGetValue receivedId with
-                    | true, (received, activity, renewal) ->
-                        do! receiver.CompleteMessageAsync received
-                        use _ = activity
-                        messages.TryRemove receivedId |> ignore
-                        do! renewal
+                    let! (receiver:ServiceBusReceiver, _, msgCtxs: ConcurrentDictionary<_,_>) = ctx
+                    match msgCtxs.TryGetValue receivedId with
+                    | true, msgCtx ->
+                        do! receiver.CompleteMessageAsync msgCtx.Message
+                        msgCtxs.TryRemove receivedId |> ignore
+                        msgCtx.Close()
                     | _ -> failwithf "Message is not in the current session: %s" receivedId
                 })
 
             member __.Nack receivedId =
                 withCtx(fun ctx -> backgroundTask {
-                    let! (receiver: ServiceBusReceiver, _, messages: ConcurrentDictionary<_,_>) = ctx
-                    match messages.TryGetValue receivedId with
-                    | true, (received, activity, renewal) ->
-                        do! receiver.AbandonMessageAsync received
-                        messages.TryRemove receivedId |> ignore
-                        use _ = activity
-                        do! renewal
+                    let! (receiver: ServiceBusReceiver, _, msgCtxs: ConcurrentDictionary<_,_>) = ctx
+                    match msgCtxs.TryGetValue receivedId with
+                    | true, msgCtx ->
+                        do! receiver.AbandonMessageAsync msgCtx.Message
+                        msgCtxs.TryRemove receivedId |> ignore
+                        msgCtx.Close()
                     | _ -> failwithf "Message is not in the current session: %s" receivedId
                 })
 
             member __.Dispose() =
                 match ctxRef.Value with
-                | Some (receiver, _, messages) ->
-                    for KeyValue(_,(_,activity,renewal)) in messages.ToArray() do
-                        try
-                            use _ = activity
-                            renewal.Dispose()
-                        with _ -> ()
-                    messages.Clear()
+                | Some (receiver, _, msgCtxs) ->
+                    for KeyValue(_,msgCtx) in msgCtxs.ToArray() do
+                        msgCtx.Close()
+                    msgCtxs.Clear()
                     receiver.DisposeAsync().AsTask().Wait()
                     ctxRef.Value <- None
                 | _ -> ()
         }
     }
 
-module LockDuration =
-    let fiveMinutes = TimeSpan.FromMinutes 5.
-    let private renew (delay: TimeSpan) (r: ServiceBusReceiver) (getMsg: unit -> (Activity * ServiceBusReceivedMessage) option) = 
-        Task.Run(fun _ ->
+module Renewable =
+    let maxLockDuration = TimeSpan.FromMinutes 5.
+    let private op (delay: TimeSpan) (msgCtx: MessageContext) = 
+        Task.Run(Func<Task>(fun _ ->
             backgroundTask {
-                do! Task.Delay delay
-                for (activity,msg) in Seq.initInfinite (fun _ -> getMsg()) |> Seq.takeWhile Option.isSome |> Seq.choose id do
-                    activity.AddEvent(ActivityEvent("Renew")) |>ignore
-                    do! r.RenewMessageLockAsync msg
-                    do! Task.Delay delay
-            } :> Task)
+                while not msgCtx.CancellationTokenSource.IsCancellationRequested do
+                    try 
+                        do! Task.Delay(delay, msgCtx.CancellationTokenSource.Token)
+                        msgCtx.Activity.AddEvent(ActivityEvent("Renewing")) |>ignore
+                        do! msgCtx.Reciever.RenewMessageLockAsync(msgCtx.Message, msgCtx.CancellationTokenSource.Token)
+                    with 
+                        :? TaskCanceledException as e -> ()
+                        | e -> 
+                            msgCtx.Activity.AddEvent(ActivityEvent("Error renewing", tags = Diagnostics.ActivityTagsCollection.ofException e)) |> ignore
+            }), msgCtx.CancellationTokenSource.Token)
 
-    let noRenew _ _ = Task.CompletedTask
+    let noop _ = Task.CompletedTask
 
     /// Update the options to maximum valid value and return a function to setup renewal Task
-    let makeRenewable lockDuration =
+    let mkNew lockDuration =
         let renewalPeriod = 
-            if lockDuration <= fiveMinutes then None
-            else Some (TimeSpan.FromSeconds 10.)
+            if lockDuration <= maxLockDuration then None
+            else Some (TimeSpan.FromSeconds 30.)
         match renewalPeriod with
-        | Some ts ->
-            renew ts
-        | _ -> noRenew
+        | Some ts -> op ts
+        | _ -> noop

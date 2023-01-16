@@ -14,3 +14,8 @@ let startActivity name (kind: ActivityKind) (source: ActivitySource) : Activity 
     source
     |> createActivity name kind
     |> fun a -> a.Start()
+
+[<RequireQualifiedAccess>]
+module ActivityTagsCollection =
+    let ofException (e: exn) =
+        ActivityTagsCollection([System.Collections.Generic.KeyValuePair("Exception",e.Message)])

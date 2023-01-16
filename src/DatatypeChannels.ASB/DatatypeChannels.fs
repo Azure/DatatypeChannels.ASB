@@ -29,25 +29,25 @@ module Channels =
                 let withBindings, receiveOptions, renew =
                     match source with
                     | Subscription binding ->
-                        let renew = Consumer.LockDuration.makeRenewable binding.Subscription.LockDuration
-                        binding.Subscription.LockDuration <- min binding.Subscription.LockDuration Consumer.LockDuration.fiveMinutes
+                        let renew = Consumer.Renewable.mkNew binding.Subscription.LockDuration
+                        binding.Subscription.LockDuration <- min binding.Subscription.LockDuration Consumer.Renewable.maxLockDuration
                         Subscription.withBinding log withAdminClient binding,
                         ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock),
                         renew
                     | Persistent (queueOptions, bindings) ->
-                        let renew = Consumer.LockDuration.makeRenewable queueOptions.LockDuration
-                        queueOptions.LockDuration <- min queueOptions.LockDuration Consumer.LockDuration.fiveMinutes
+                        let renew = Consumer.Renewable.mkNew queueOptions.LockDuration
+                        queueOptions.LockDuration <- min queueOptions.LockDuration Consumer.Renewable.maxLockDuration
                         Queue.withBindings log withAdminClient queueOptions bindings,
                         ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock),
                         renew
                     | Temporary bindings ->
                         Queue.withBindings log withAdminClient (CreateQueueOptions(Guid.NewGuid().ToString(), AutoDeleteOnIdle = tempIdle)) bindings,
                         ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete),
-                        Consumer.LockDuration.noRenew
+                        Consumer.Renewable.noop
                     | DeadLetter path ->
                         (fun cont -> Task.FromResult path |> cont),
                         ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock, SubQueue = SubQueue.DeadLetter),
-                        Consumer.LockDuration.noRenew
+                        Consumer.Renewable.noop
                 prefetch |> Option.iter (fun v -> receiveOptions.PrefetchCount <- int v)
                 Consumer.mkNew receiveOptions renew ofRecevied withClient withBindings
 

@@ -153,7 +153,7 @@ let tests =
                 let! dlc = DeadLetter "renews-queue" |> channels.GetConsumer PlainText.ofReceived
                 let publisher = channels.GetPublisher (PlainText.toSend testId) topic
                 do! Task.Delay 5_000 // majic number - this is how long it takes the backend to start routing messages to this subscription!
-                let n = 2
+                let n = 20
                 for i in 1..n do
                     do! publisher |> Publisher.publish $"test-payload-{i}"
                 let xs = ResizeArray()
