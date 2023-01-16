@@ -23,7 +23,7 @@ Pre-requisites:
 When building for the first time:
 ```
 dotnet tool restore
-dotnet fake build -t init <YOUR_LOCATION> <YOUR_RG> <YOUR_NAMESPACE>
+dotnet fsi build.fsx -t init <YOUR_LOCATION> <YOUR_RG> <YOUR_NAMESPACE>
 ```
 Where 
 - <YOUR_LOCATION> is Azure region where Service Bus will be provisioned
@@ -31,7 +31,7 @@ Where
 - <YOUR_NAMESPACE> Azure Service Bus namespace to create 
 
 ```
-dotnet fake build
+dotnet fsi build.fsx
 ```
 
 
