@@ -37,7 +37,9 @@ let mkNew (options:ServiceBusReceiverOptions)
         match ctxRef.Value with
         | Some ((receiver,_,_) as ctx) when not receiver.IsClosed -> Task.FromResult ctx
         | _ -> fun (name:Task<_>) -> backgroundTask {
+                    use activity = activitySource |> Diagnostics.startActivity "new" ActivityKind.Consumer
                     let! name = name
+                    activity.AddTag("binding", $"{name}/{options.SubQueue}") |> ignore
                     let startActivity _ = activitySource |> Diagnostics.startActivity name ActivityKind.Consumer
                     let receiver = withClient (fun client -> client.CreateReceiver(name, options))
                     ctxRef.Value <- Some (receiver, startActivity, ConcurrentDictionary())
@@ -71,9 +73,9 @@ let mkNew (options:ServiceBusReceiverOptions)
                         return msg |> Option.map (fun msg -> 
                             let msgCtx = MessageContext.From received activity receiver
                             if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock then
-                                if msgCtxs.TryAdd(received.LockToken, msgCtx) then startRenewal msgCtx |> ignore
+                                if msgCtxs.TryAdd(received.MessageId, msgCtx) then startRenewal msgCtx |> ignore
                                 else failwith "Unable to add the message"
-                            { Msg = msg; Id = received.LockToken })
+                            { Msg = msg; Id = received.MessageId })
                 }
 
             member __.Ack receivedId =
