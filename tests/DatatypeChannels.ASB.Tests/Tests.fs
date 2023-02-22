@@ -156,13 +156,13 @@ let tests =
                 let n = 200
                 for i in 1..n do
                     do! publisher |> Publisher.publish $"test-payload-{i}"
-                let! xs = // also test parallel consumption
-                    seq {for _ in 1..2 -> seq { for _ in 1..n/2 -> TimeSpan.FromSeconds 1. |> consumer.Get}}
+                let! xs = // also test parallel consumption, needs longer timeout to fetch each message
+                    seq { for _ in 1..10 -> seq { for _ in 1..n/10 -> TimeSpan.FromSeconds 3. |> consumer.Get }}
                     |> Seq.map Task.WhenAll
                     |> Task.WhenAll
                     |> Task.map (Array.collect id)
                     |> Task.map (Array.choose id)
-                xs |> Seq.distinct |> Seq.length =! n
+                (xs.Length, xs.Length) =! (xs |> Seq.distinct |> Seq.length, n)
                 do! Task.Delay (TimeSpan.FromMinutes 7.)
                 for received in xs do
                     do! consumer.Ack received.Id
