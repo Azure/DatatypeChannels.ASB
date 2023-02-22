@@ -153,13 +153,15 @@ let tests =
                 let! dlc = DeadLetter "renews-queue" |> channels.GetConsumer PlainText.ofReceived
                 let publisher = channels.GetPublisher (PlainText.toSend testId) topic
                 do! Task.Delay 5_000 // majic number - this is how long it takes the backend to start routing messages to this subscription!
-                let n = 20
+                let n = 200
                 for i in 1..n do
                     do! publisher |> Publisher.publish $"test-payload-{i}"
-                let xs = ResizeArray()
-                for i in 1..n do
-                    let! received = TimeSpan.FromSeconds 1. |> consumer.Get
-                    received |> Option.iter xs.Add 
+                let! xs = // also test parallel consumption
+                    seq {for _ in 1..2 -> seq { for _ in 1..n/2 -> TimeSpan.FromSeconds 1. |> consumer.Get}}
+                    |> Seq.map Task.WhenAll
+                    |> Task.WhenAll
+                    |> Task.map (Array.collect id)
+                    |> Task.map (Array.choose id)
                 xs |> Seq.distinct |> Seq.length =! n
                 do! Task.Delay (TimeSpan.FromMinutes 7.)
                 for received in xs do
