@@ -25,8 +25,11 @@ type internal MessageContext =
           CancellationTokenSource = new CancellationTokenSource()
           Reciever =  reciever }
 
+type internal Options() =
+    inherit ServiceBusReceiverOptions()
+    member val IgnoreDuplicates = true with get,set
 
-let mkNew (options:ServiceBusReceiverOptions)
+let mkNew (options: Options)
           (startRenewal: MessageContext -> Task)
           (OfReceived ofReceived)
           (withClient: (ServiceBusClient -> _) -> _)
@@ -70,12 +73,18 @@ let mkNew (options:ServiceBusReceiverOptions)
                                         activity.Dispose()
                                     return None
                             }
-                        return msg |> Option.map (fun msg -> 
+                        return msg |> Option.bind (fun msg -> 
                             let msgCtx = MessageContext.From received activity receiver
-                            if receiver.ReceiveMode = ServiceBusReceiveMode.PeekLock then
-                                if msgCtxs.TryAdd(received.MessageId, msgCtx) then startRenewal msgCtx |> ignore
-                                else failwith "Unable to add the message"
-                            { Msg = msg; Id = received.MessageId })
+                            match receiver.ReceiveMode with
+                            | ServiceBusReceiveMode.ReceiveAndDelete ->
+                                Some { Msg = msg; Id = received.MessageId }
+                            | ServiceBusReceiveMode.PeekLock when msgCtxs.TryAdd(received.MessageId, msgCtx) ->
+                                startRenewal msgCtx |> ignore
+                                Some { Msg = msg; Id = received.MessageId }
+                            | ServiceBusReceiveMode.PeekLock when not options.IgnoreDuplicates ->
+                                failwith $"Unable to add the message, duplicate id: {received.MessageId}"
+                            | _ -> None 
+                        )
                 }
 
             member __.Ack receivedId =
