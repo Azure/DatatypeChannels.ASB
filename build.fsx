@@ -61,7 +61,8 @@ module Shell =
 
 module Az =
     let query args =
-        psh "az" args
+        psh (if OperatingSystem.IsWindows() then "cmd.exe" else "az")
+            (if OperatingSystem.IsWindows() then $"/c az.cmd {args}" else args)
     let currentUserId () =
         query "ad signed-in-user show --query objectId -o tsv" "." (Parse.plain >> Guid)
     let currentSpId principalId =
@@ -191,7 +192,7 @@ Target.create "releaseDocs" (fun _ ->
     let tempDocsDir = "tmp/gh-pages"
     Shell.cleanDir tempDocsDir
     Git.Repository.cloneSingleBranch "" gitRepo "gh-pages" tempDocsDir
-    Git.Repository.fullclean tempDocsDir
+    Git.Repository.fullClean tempDocsDir
     Shell.copyRecursive "output" tempDocsDir true |> Trace.tracefn "%A"
     Git.Staging.stageAll tempDocsDir
     Git.Commit.exec tempDocsDir (sprintf "Update generated documentation for version %s" release.NugetVersion)
