@@ -8,22 +8,27 @@ open System.Collections.Concurrent
 open System.Diagnostics
 open Azure.Messaging.ServiceBus
 
-type internal MessageContext =
+type MessageContext =
     { Message: ServiceBusReceivedMessage
       CancellationTokenSource: CancellationTokenSource
       Activity: Activity
-      Reciever: ServiceBusReceiver }
+      GetReciever: unit -> Task<ServiceBusReceiver> }
     member x.Close() =
         if not x.CancellationTokenSource.IsCancellationRequested then x.CancellationTokenSource.Cancel()
         x.Activity.Stop()
+    member x.Renew() = 
+        backgroundTask { 
+            let! receiver = x.GetReciever()
+            return! receiver.RenewMessageLockAsync(x.Message, x.CancellationTokenSource.Token)
+        }
 
     static member From (msg: ServiceBusReceivedMessage)
                        (activity: Activity)
-                       (reciever: ServiceBusReceiver) =
+                       (withCtx: (_ -> Task<_>) -> Task<ServiceBusReceiver>) =
         { Message = msg
           Activity = activity
           CancellationTokenSource = new CancellationTokenSource()
-          Reciever =  reciever }
+          GetReciever = fun () -> withCtx (Task.map (fun (r,_,_) -> r)) }
 
 type internal Options() =
     inherit ServiceBusReceiverOptions()
@@ -37,18 +42,21 @@ let mkNew (options: Options)
     let ctxRef = ref Option<ServiceBusReceiver * (unit -> Activity) * ConcurrentDictionary<string, MessageContext>>.None
     let activitySource = Diagnostics.mkActivitySource "Consumer"
     let withCtx cont =
+        let startCtx msgs (name:Task<_>) =
+            backgroundTask {
+                use activity = activitySource |> Diagnostics.startActivity (Diagnostics.formatName "NewConsumerCtx") ActivityKind.Consumer
+                let! name = name
+                activity.AddTag("binding", $"{name}/{options.SubQueue}") |> ignore
+                let startActivity _ = activitySource |> Diagnostics.startActivity name ActivityKind.Consumer
+                let receiver = withClient (fun client -> client.CreateReceiver(name, options))
+                ctxRef.Value <- Some (receiver, startActivity, msgs)
+                return ctxRef.Value.Value
+            }
         match ctxRef.Value with
-        | Some ((receiver,_,_) as ctx) when not receiver.IsClosed -> Task.FromResult ctx
-        | _ -> fun (name:Task<_>) -> backgroundTask {
-                    use activity = activitySource |> Diagnostics.startActivity "new" ActivityKind.Consumer
-                    let! name = name
-                    activity.AddTag("binding", $"{name}/{options.SubQueue}") |> ignore
-                    let startActivity _ = activitySource |> Diagnostics.startActivity name ActivityKind.Consumer
-                    let receiver = withClient (fun client -> client.CreateReceiver(name, options))
-                    ctxRef.Value <- Some (receiver, startActivity, ConcurrentDictionary())
-                    return ctxRef.Value.Value
-               }
-               |> withBinding
+        | Some (receiver,_,msgs) when receiver.IsClosed -> 
+            startCtx msgs |> withBinding
+        | Some (_ as ctx) -> Task.FromResult ctx
+        | _ -> startCtx (ConcurrentDictionary()) |> withBinding
         |> cont
 
     backgroundTask {
@@ -74,7 +82,7 @@ let mkNew (options: Options)
                                     return None
                             }
                         return msg |> Option.bind (fun msg -> 
-                            let msgCtx = MessageContext.From received activity receiver
+                            let msgCtx = MessageContext.From received activity withCtx
                             match receiver.ReceiveMode with
                             | ServiceBusReceiveMode.ReceiveAndDelete ->
                                 Some { Msg = msg; Id = received.MessageId }
@@ -114,8 +122,7 @@ let mkNew (options: Options)
                 | Some (receiver, _, msgCtxs) ->
                     for KeyValue(_,msgCtx) in msgCtxs.ToArray() do
                         msgCtx.Close()
-                    msgCtxs.Clear()
-                    receiver.DisposeAsync().AsTask().Wait()
+                    receiver.CloseAsync().Wait()
                     ctxRef.Value <- None
                 | _ -> ()
         }
@@ -130,7 +137,7 @@ module Renewable =
                     try 
                         do! Task.Delay(delay, msgCtx.CancellationTokenSource.Token)
                         msgCtx.Activity.AddEvent(ActivityEvent("Renewing")) |>ignore
-                        do! msgCtx.Reciever.RenewMessageLockAsync(msgCtx.Message, msgCtx.CancellationTokenSource.Token)
+                        do! msgCtx.Renew()
                     with 
                         :? TaskCanceledException as e -> ()
                         | e -> 
