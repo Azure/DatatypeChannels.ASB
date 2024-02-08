@@ -1,5 +1,5 @@
 pool:
-    vmImage: 'ubuntu-20.04'
+    vmImage: 'ubuntu-latest'
 variables:
     BUILD_NUMBER: $[counter('buildCounter',1)]
     NUGET_REPO_URL: https://api.nuget.org/v3/index.json
@@ -9,6 +9,12 @@ trigger:
         include:
         - master
         - refs/tags/*
+
+pr:
+    branches:
+        include:
+        - master
+
 steps:
     - task: UseDotNet@2
       inputs:
@@ -25,7 +31,7 @@ steps:
       env:
         NUGET_REPO_KEY: $(NUGET_REPO_KEY)
       inputs:
-        azureSubscription: 'Azure VMware Solution - Testing Subscription 1 [Engg Group Only](7f1fae41-7708-4fa4-89b3-f6552cad2fc1)'
+        azureSubscription: 'OSS Testing'
         scriptType: 'bash'
         addSpnToEnvironment: true
         scriptLocation: 'inlineScript'
