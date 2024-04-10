@@ -65,7 +65,7 @@ module Az =
         psh (if OperatingSystem.IsWindows() then "cmd.exe" else "az")
             (if OperatingSystem.IsWindows() then $"/c az.cmd {args}" else args)
     let currentUserId () =
-        query "ad signed-in-user show --query objectId -o tsv" "." (Parse.plain >> Guid)
+        query "ad signed-in-user show --query id -o tsv" "." (Parse.plain >> Guid)
     let currentSpId principalId =
         query (sprintf "ad sp show --id %O --query id -o tsv" principalId) "." (Parse.plain >> Guid)
 
