@@ -18,7 +18,7 @@ pr:
 steps:
     - task: UseDotNet@2
       inputs:
-        version: '7.0.100'
+        version: '8.0.100'
 
     - task: DotNetCoreCLI@2
       displayName: "Restore tools"

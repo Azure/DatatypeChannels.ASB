@@ -2,7 +2,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>net7.0</TargetFramework>
+        <TargetFramework>net8.0</TargetFramework>
         <GenerateProgramFile>false</GenerateProgramFile>
     </PropertyGroup>
     <ItemGroup>
@@ -16,11 +16,11 @@
         <ProjectReference Include="../../src/DatatypeChannels.ASB/DatatypeChannels.ASB.fsproj" />
     </ItemGroup>
     <ItemGroup>
-        <PackageReference Include="Azure.Identity" Version="1.10.2" />
+        <PackageReference Include="Azure.Identity" Version="1.10.4" />
         <PackageReference Include="Expecto" Version="9.0.4" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="5.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="5.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="5.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.8.3" />
         <PackageReference Include="Unquote" Version="5.0.0" />
         <PackageReference Include="YoloDev.Expecto.TestSdk" Version="0.11.1" />
