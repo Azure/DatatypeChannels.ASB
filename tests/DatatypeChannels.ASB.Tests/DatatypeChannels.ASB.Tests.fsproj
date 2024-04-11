@@ -16,7 +16,7 @@
         <ProjectReference Include="../../src/DatatypeChannels.ASB/DatatypeChannels.ASB.fsproj" />
     </ItemGroup>
     <ItemGroup>
-        <PackageReference Include="Azure.Identity" Version="1.10.4" />
+        <PackageReference Include="Azure.Identity" Version="1.11.0" />
         <PackageReference Include="Expecto" Version="9.0.4" />
         <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.0" />
         <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
