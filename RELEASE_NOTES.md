@@ -1,3 +1,6 @@
+### 2.1.0
+* resetting build/revision
+
 ### 2.0.0
 * targeting .NET 8
 
