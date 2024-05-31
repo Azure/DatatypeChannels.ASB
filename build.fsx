@@ -8,7 +8,7 @@
 #r "nuget: Farmer"
 #r "nuget: Microsoft.Extensions.Configuration.Json"
 #r "nuget: Microsoft.Extensions.Configuration.Binder"
-#r "nuget: MSBuild.StructuredLogger, 2.1.820"
+#r "nuget: MSBuild.StructuredLogger, 2.2.243"
 
 open Fake.Core
 open Fake.Core.TargetOperators

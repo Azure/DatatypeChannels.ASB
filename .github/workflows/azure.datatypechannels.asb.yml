@@ -1,0 +1,53 @@
+name: public/Azure.DatatypeChannels.ASB
+on:
+  push:
+    branches:
+    - master
+    - "refs/tags/*"
+  pull_request_target:
+    branches:
+    - master
+env:
+  BUILD_NUMBER: "${{ github.run_number }}"
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: 
+      name: build
+    steps:
+    - name: checkout
+      uses: actions/checkout@v4.1.0
+    - uses: actions/setup-dotnet@v4.0.0
+      with:
+        dotnet-version: 8.0.100
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.CLIENT_ID }}
+        tenant-id: ${{ secrets.TENANT_ID }}
+        subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
+    - name: Restore tools
+      run: dotnet tool restore
+    - name: Build
+      run: dotnet fsi build.fsx -t ci
+
+  release:
+    needs: build
+    if: ${{ startsWith(github.ref, 'refs/tags') }}
+    runs-on: ubuntu-latest
+    environment: 
+      name: release
+    steps:
+    - name: checkout
+      uses: actions/checkout@v4.1.0
+    - uses: actions/setup-dotnet@v4.0.0
+      with:
+        dotnet-version: 8.0.100
+    - name: Publish
+      env:
+        NUGET_REPO_KEY: "${{ secrets.NUGET_REPO_KEY }}"
+        NUGET_REPO_URL: "${{ vars.NUGET_REPO_URL }}"
+      run: dotnet fsi build.fsx -s -t release
