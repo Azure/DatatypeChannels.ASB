@@ -1,0 +1,32 @@
+name: public/Azure.DatatypeChannels.ASB
+on:
+  push:
+    branches:
+    - master
+    - "*"
+  pull_request:
+    branches:
+    - master
+env:
+  BUILD_NUMBER: "$[counter('buildCounter',1)]"
+  NUGET_REPO_URL: https://api.nuget.org/v3/index.json
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@v4.1.0
+    - uses: actions/setup-dotnet@v4.0.0
+      with:
+        dotnet-version: 8.0.100
+    - name: Restore tools
+      run: dotnet tool restore
+    - env:
+        NUGET_REPO_KEY: "${{ secrets.NUGET_REPO_KEY }}"
+      uses: azure/login@v1.6.0
+      with:
+        creds: "${{ secrets.AZURE_CREDENTIALS }}"
+    - env:
+        NUGET_REPO_KEY: "${{ secrets.NUGET_REPO_KEY }}"
+      run:
+      shell: bash
