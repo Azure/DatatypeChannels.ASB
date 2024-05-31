@@ -32,7 +32,11 @@ jobs:
     - name: Restore tools
       run: dotnet tool restore
     - name: Build
-      run: dotnet fsi build.fsx -t ci
+      uses: azure/cli@v2
+      with:
+        azcliversion: latest
+        inlineScript: |
+          dotnet fsi build.fsx -t ci
 
   release:
     needs: build
