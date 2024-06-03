@@ -1,6 +1,6 @@
 # Azure Service Bus Datatype Channels
 
-[![Build Status](https://dev.azure.com/azure-fsharp-libs/public/_apis/build/status/Azure.DatatypeChannels.ASB?branchName=master)](https://dev.azure.com/azure-fsharp-libs/public/_build/latest?definitionId=5&branchName=master)
+[![Build](https://github.com/Azure/DatatypeChannels.ASB/actions/workflows/azure.datatypechannels.asb.yml/badge.svg)](https://github.com/Azure/DatatypeChannels.ASB/actions/workflows/azure.datatypechannels.asb.yml)
 [![NuGet](https://img.shields.io/nuget/v/DatatypeChannels.ASB.svg?style=flat)](https://www.nuget.org/packages/DatatypeChannels.ASB/)
 
 

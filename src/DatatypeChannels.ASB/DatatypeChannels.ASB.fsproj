@@ -4,6 +4,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <IsTestProject>false</IsTestProject>
+    <NoWarn>3511</NoWarn>
     <!-- Sourcelink -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
