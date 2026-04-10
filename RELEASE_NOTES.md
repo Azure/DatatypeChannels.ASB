@@ -1,3 +1,6 @@
+### 3.0.0
+* target .NET 10
+
 ### 2.1.0
 * resetting build/revision
 

@@ -22,7 +22,7 @@ jobs:
       uses: actions/checkout@v4.1.0
     - uses: actions/setup-dotnet@v4.0.0
       with:
-        dotnet-version: 8.0.100
+        global-json-file: global.json
     - name: Login to Azure
       uses: azure/login@v2
       with:
@@ -47,7 +47,7 @@ jobs:
       uses: actions/checkout@v4.1.0
     - uses: actions/setup-dotnet@v4.0.0
       with:
-        dotnet-version: 8.0.100
+        global-json-file: global.json
     - name: Publish
       env:
         NUGET_REPO_KEY: "${{ secrets.NUGET_REPO_KEY }}"
