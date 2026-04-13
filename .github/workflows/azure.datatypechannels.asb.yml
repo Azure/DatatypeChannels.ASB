@@ -54,4 +54,4 @@ jobs:
       env:
         NUGET_REPO_KEY: "${{ secrets.NUGET_REPO_KEY }}"
         NUGET_REPO_URL: "${{ vars.NUGET_REPO_URL }}"
-      run: dotnet fsi build.fsx -s -t release
+      run: dotnet fsi build.fsx -t release
