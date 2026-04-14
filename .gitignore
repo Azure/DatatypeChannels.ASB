@@ -12,9 +12,9 @@ packages/
 
 .fake
 .farmer
-/output
-temp/
+output/
 tmp/
+out/
 *.user
 local.settings.json
 
