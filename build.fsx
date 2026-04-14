@@ -143,6 +143,8 @@ Target.create "test" (fun _ ->
 Target.create "package" (fun _ ->
     let args = sprintf "/p:Version=%s --no-restore" ver.AsString
     DotNet.pack (fun a -> a.WithCommon (fun c -> { c with CustomParams = Some args })) "."
+    !! "src/DatatypeChannels.ASB/bin/Release/*.nupkg"
+    |> Shell.copyFiles "out"
 )
 
 Target.create "publish" (fun _ ->
@@ -152,7 +154,7 @@ Target.create "publish" (fun _ ->
                        "DatatypeChannels.ASB" ver.AsString
                        (Environment.environVar "NUGET_REPO_URL")
                        (Environment.environVar "NUGET_REPO_KEY")
-    let result = exec ("src/DatatypeChannels.ASB/bin/Release") "nuget" args
+    let result = exec "out" "nuget" args
     if (not result.OK) then failwithf "%A" result.Errors
 )
 
@@ -226,16 +228,17 @@ Target.create "ci" ignore
   ==> "build"
   ==> "test"
   ==> "generateDocs"
+
+"build"
   ==> "package"
-  ==> "publish"
 
 "releaseDocs"
   <== ["test"; "generateDocs" ]
 
 "release"
-  <== [ "initCI"; "publish" ]
+  <== [ "publish" ]
 
 "ci"
-  <== [ "initCI"; "test" ]
+  <== [ "initCI"; "test"; "package" ]
 
 Target.runOrDefaultWithArguments "test"
