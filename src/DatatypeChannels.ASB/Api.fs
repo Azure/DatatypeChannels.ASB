@@ -53,12 +53,27 @@ type OfReceived<'msg> = OfReceived of (ServiceBusReceivedMessage -> 'msg)
 /// Disassembles user message into AMQP properties
 type ToSend<'msg> = ToSend of ('msg -> ServiceBusMessage)
 
+/// Channel-level options controlling consumer/publisher behavior.
+type ChannelOptions =
+    { Prefetch: uint16 option // optional prefetch limit
+      IgnoreDuplicates: bool
+      PassiveNack: bool // when true, Nack only stops tracking the message without abandoning the lock on the broker
+      TempIdle: TimeSpan } // temporary queue idle lifetime
+    static member Default =
+        { Prefetch = None
+          TempIdle = TimeSpan.FromMinutes 5.
+          IgnoreDuplicates = true
+          PassiveNack = false }
+
 /// Channels is a factory for constructing channel consumers and publishers.
 type Channels =
     inherit IDisposable
 
     /// Construct a consumer, using specified message type, the source to bind to and the assember.
     abstract GetConsumer<'msg> : OfReceived<'msg> -> Source -> Task<Consumer<'msg>>
+
+    /// Construct a consumer with per-consumer option overrides.
+    abstract GetConsumerWith<'msg> : ChannelOptions -> OfReceived<'msg> -> Source -> Task<Consumer<'msg>>
 
     /// Construct a publisher for the specified message type and disassembler.
     abstract GetPublisher<'msg> : ToSend<'msg> -> Topic -> Publisher<'msg>

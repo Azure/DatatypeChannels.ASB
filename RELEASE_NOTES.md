@@ -1,3 +1,6 @@
+### 3.1.0
+* adding `PassiveNack` consumer option - cleanup the local state, but don't send the nack to the bus
+
 ### 3.0.0
 * target .NET 10
 
