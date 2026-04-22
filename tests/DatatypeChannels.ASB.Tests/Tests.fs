@@ -144,6 +144,30 @@ let tests =
                 received.Value.Msg =! "test-payload"
             }
 
+        itt "PassiveNack does not dead-letter immediately" <| fun testId ->
+            task {
+                // short LockDuration so the broker releases the message quickly after PassiveNack
+                let src =
+                    (CreateQueueOptions("passive-nack-queue", LockDuration = TimeSpan.FromSeconds 30., MaxDeliveryCount = 5, AutoDeleteOnIdle = TimeSpan.FromMinutes 5.),
+                     [Binding.onTest testId "passive-nack-sub" topic]) |> Persistent
+                let opts = { ChannelOptions.Default with PassiveNack = true }
+                let! consumer = channels.GetConsumerWith opts PlainText.ofReceived src
+                let! dlqConsumer = channels.GetConsumer PlainText.ofReceived (DeadLetter "passive-nack-queue")
+                let publisher = channels.GetPublisher (PlainText.toSend testId) topic
+                do! Task.Delay 5_000 // backend routing warmup
+                do! publisher |> Publisher.publish "test-payload"
+                let! received = TimeSpan.FromSeconds 5. |> consumer.Get
+                received.Value.Msg =! "test-payload"
+                do! consumer.Nack received.Value.Id
+                // PassiveNack should NOT have abandoned; nothing on DLQ
+                let! dlq = TimeSpan.FromSeconds 3. |> dlqConsumer.Get
+                dlq =! None
+                // message should redeliver on the main consumer once the lock expires (~30s)
+                let! redelivered = TimeSpan.FromSeconds 60. |> consumer.Get
+                redelivered.Value.Msg =! "test-payload"
+                do! consumer.Ack redelivered.Value.Id
+            }
+
         itt "Exceeding the lock duration renews messages" <| fun testId ->
             task {
                 let src = // 5min is the maximum LockDuration, we'll adjust it and setup the lock renewal

@@ -33,6 +33,7 @@ type MessageContext =
 type internal Options() =
     inherit ServiceBusReceiverOptions()
     member val IgnoreDuplicates = true with get,set
+    member val PassiveNack = false with get,set
 
 let mkNew (options: Options)
           (startRenewal: MessageContext -> Task)
@@ -111,7 +112,8 @@ let mkNew (options: Options)
                     let! (receiver: ServiceBusReceiver, _, msgCtxs: ConcurrentDictionary<_,_>) = ctx
                     match msgCtxs.TryGetValue receivedId with
                     | true, msgCtx ->
-                        do! receiver.AbandonMessageAsync msgCtx.Message
+                        if not options.PassiveNack then
+                            do! receiver.AbandonMessageAsync msgCtx.Message
                         msgCtxs.TryRemove receivedId |> ignore
                         msgCtx.Close()
                     | _ -> failwithf "Message is not in the current session: %s" receivedId

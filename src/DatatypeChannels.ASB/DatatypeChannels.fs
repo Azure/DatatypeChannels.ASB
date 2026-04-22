@@ -5,15 +5,6 @@ open System.Threading.Tasks
 open Azure.Messaging.ServiceBus
 open Azure.Messaging.ServiceBus.Administration
 
-type ChannelOptions = 
-    { Prefetch: uint16 option // optional prefetch limit
-      IgnoreDuplicates: bool
-      TempIdle: TimeSpan } // temporary queue idle lifetime
-    static member Default =
-        { Prefetch = None
-          TempIdle = TimeSpan.FromMinutes 5.
-          IgnoreDuplicates = true }
-
 [<RequireQualifiedAccess>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Channels =
@@ -31,32 +22,40 @@ module Channels =
         let withClient cont = cont client.Value
         let withAdminClient cont = cont adminClient.Value
 
+        let getConsumer (ofRecevied: OfReceived<'msg>) source (consumerOptions: ChannelOptions) : Task<Consumer<'msg>> =
+            let withBindings, receiveOptions, renew =
+                match source with
+                | Subscription binding ->
+                    let renew = Consumer.Renewable.mkNew binding.Subscription.LockDuration
+                    binding.Subscription.LockDuration <- min binding.Subscription.LockDuration Consumer.Renewable.maxLockDuration
+                    Subscription.withBinding log withAdminClient binding,
+                    Consumer.Options(ReceiveMode = ServiceBusReceiveMode.PeekLock),
+                    renew
+                | Persistent (queueOptions, bindings) ->
+                    let renew = Consumer.Renewable.mkNew queueOptions.LockDuration
+                    queueOptions.LockDuration <- min queueOptions.LockDuration Consumer.Renewable.maxLockDuration
+                    Queue.withBindings log withAdminClient queueOptions bindings,
+                    Consumer.Options(ReceiveMode = ServiceBusReceiveMode.PeekLock),
+                    renew
+                | Temporary bindings ->
+                    Queue.withBindings log withAdminClient (CreateQueueOptions(Guid.NewGuid().ToString(), AutoDeleteOnIdle = consumerOptions.TempIdle)) bindings,
+                    Consumer.Options(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete),
+                    Consumer.Renewable.noop
+                | DeadLetter path ->
+                    (fun cont -> Task.FromResult path |> cont),
+                    Consumer.Options(ReceiveMode = ServiceBusReceiveMode.PeekLock, SubQueue = SubQueue.DeadLetter),
+                    Consumer.Renewable.noop
+            consumerOptions.Prefetch |> Option.iter (fun v -> receiveOptions.PrefetchCount <- int v)
+            receiveOptions.IgnoreDuplicates <- consumerOptions.IgnoreDuplicates
+            receiveOptions.PassiveNack <- consumerOptions.PassiveNack
+            Consumer.mkNew receiveOptions renew ofRecevied withClient withBindings
+
         { new Channels with
             member __.GetConsumer<'msg> ofRecevied source : Task<Consumer<'msg>> =
-                let withBindings, receiveOptions, renew =
-                    match source with
-                    | Subscription binding ->
-                        let renew = Consumer.Renewable.mkNew binding.Subscription.LockDuration
-                        binding.Subscription.LockDuration <- min binding.Subscription.LockDuration Consumer.Renewable.maxLockDuration
-                        Subscription.withBinding log withAdminClient binding,
-                        Consumer.Options(ReceiveMode = ServiceBusReceiveMode.PeekLock),
-                        renew
-                    | Persistent (queueOptions, bindings) ->
-                        let renew = Consumer.Renewable.mkNew queueOptions.LockDuration
-                        queueOptions.LockDuration <- min queueOptions.LockDuration Consumer.Renewable.maxLockDuration
-                        Queue.withBindings log withAdminClient queueOptions bindings,
-                        Consumer.Options(ReceiveMode = ServiceBusReceiveMode.PeekLock),
-                        renew
-                    | Temporary bindings ->
-                        Queue.withBindings log withAdminClient (CreateQueueOptions(Guid.NewGuid().ToString(), AutoDeleteOnIdle = options.TempIdle)) bindings,
-                        Consumer.Options(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete),
-                        Consumer.Renewable.noop
-                    | DeadLetter path ->
-                        (fun cont -> Task.FromResult path |> cont),
-                        Consumer.Options(ReceiveMode = ServiceBusReceiveMode.PeekLock, SubQueue = SubQueue.DeadLetter),
-                        Consumer.Renewable.noop
-                options.Prefetch |> Option.iter (fun v -> receiveOptions.PrefetchCount <- int v)
-                Consumer.mkNew receiveOptions renew ofRecevied withClient withBindings
+                getConsumer ofRecevied source options
+
+            member __.GetConsumerWith<'msg> (consumerOptions : ChannelOptions) ofRecevied source : Task<Consumer<'msg>> =
+                getConsumer ofRecevied source consumerOptions
 
             member __.GetPublisher<'msg> toSend (Topic topic) : Publisher<'msg> =
                 let sender = lazy client.Value.CreateSender topic
