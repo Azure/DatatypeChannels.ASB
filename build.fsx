@@ -66,8 +66,6 @@ module Az =
             (if OperatingSystem.IsWindows() then $"/c az.cmd {args}" else args)
     let currentUserId () =
         query "ad signed-in-user show --query id -o tsv" "." (Parse.plain >> Guid)
-    let currentSpId principalId =
-        query (sprintf "ad sp show --id %O --query id -o tsv" principalId) "." (Parse.plain >> Guid)
 
 module Settings =
     open Microsoft.Extensions.Configuration
@@ -147,17 +145,6 @@ Target.create "package" (fun _ ->
     |> Shell.copyFiles "out"
 )
 
-Target.create "publish" (fun _ ->
-    let exec dir =
-        DotNet.exec (fun a -> a.WithCommon (fun c -> { c with WorkingDirectory=dir }))
-    let args = sprintf "push %s.%s.nupkg -s %s -k %s"
-                       "DatatypeChannels.ASB" ver.AsString
-                       (Environment.environVar "NUGET_REPO_URL")
-                       (Environment.environVar "NUGET_REPO_KEY")
-    let result = exec "out" "nuget" args
-    if (not result.OK) then failwithf "%A" result.Errors
-)
-
 Target.create "meta" (fun _ ->
     [ "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">"
       "<PropertyGroup>"
@@ -211,16 +198,9 @@ Target.create "init" (fun p ->
     ARM.init (currentUser, "User") loc rg privateName
 )
 
-Target.create "initCI" (fun _ ->
-    let loc = Location.CentralUS
-    let rg = "devops-azure-datatype-channels-dev"
-    let ns = "datatype-channels-ci"
-    let currentUser = Environment.environVar "servicePrincipalId" |> Az.currentSpId
-    ARM.init (currentUser, "ServicePrincipal") loc rg ns
-)
-
-Target.create "release" ignore
-Target.create "ci" ignore
+for target in ["initCI"; "ci"; "publish"; "release"] do
+    Target.create target (fun _ ->
+        failwith "CI and package releases moved to Azure Pipelines. See docs/azure-pipelines.md.")
 
 "clean"
   ==> "restore"
@@ -234,11 +214,5 @@ Target.create "ci" ignore
 
 "releaseDocs"
   <== ["test"; "generateDocs" ]
-
-"release"
-  <== [ "publish" ]
-
-"ci"
-  <== [ "initCI"; "test"; "package" ]
 
 Target.runOrDefaultWithArguments "test"

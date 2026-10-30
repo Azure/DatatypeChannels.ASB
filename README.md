@@ -1,6 +1,6 @@
 # Azure Service Bus Datatype Channels
 
-[![Build](https://github.com/Azure/DatatypeChannels.ASB/actions/workflows/azure.datatypechannels.asb.yml/badge.svg)](https://github.com/Azure/DatatypeChannels.ASB/actions/workflows/azure.datatypechannels.asb.yml)
+[Build and release with Azure Pipelines](docs/azure-pipelines.md)
 [![NuGet](https://img.shields.io/nuget/v/DatatypeChannels.ASB.svg?style=flat)](https://www.nuget.org/packages/DatatypeChannels.ASB/)
 
 
@@ -17,10 +17,20 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 
 ## Building
 Pre-requisites:
-- .NET SDK 10.0
+- .NET SDK matching `global.json` (10.0.201 with latest patch in that feature band)
 - Azure CLI
 
-When building for the first time:
+Build without Azure access:
+```
+dotnet build
+```
+
+The test suite is an integration suite. It creates Service Bus messaging entities
+and requires an authenticated identity with access to a test namespace. It is
+not an offline unit-test suite.
+
+For local integration testing only, the following explicit initialization
+**provisions Azure resources**. Do not run it for an offline build or in CI:
 ```
 dotnet tool restore
 dotnet fsi build.fsx -t init <YOUR_LOCATION> <YOUR_RG> <YOUR_NAMESPACE>
@@ -33,6 +43,12 @@ Where
 ```
 dotnet fsi build.fsx
 ```
+
+CI uses preinstalled SDK tools, an existing namespace, and Azure Pipelines
+authentication. It does not run the local `init` target. The legacy `initCI`,
+`ci`, `publish`, and `release` targets are retired. See the
+[pipeline setup and cutover guide](docs/azure-pipelines.md) for administrator
+prerequisites and release authorization.
 
 
 ## Contributing
