@@ -1,0 +1,141 @@
+parameters:
+- name: publishPackage
+  displayName: Publish the tested package (manual tag runs only)
+  type: boolean
+  default: false
+
+trigger:
+  branches:
+    include:
+    - master
+  tags:
+    include:
+    - '*'
+
+pr:
+  autoCancel: true
+  drafts: false
+  branches:
+    include:
+    - master
+
+variables:
+  PACKAGE_PATCH_OFFSET: '0'
+
+stages:
+- stage: Build
+  displayName: Build and package without credentials
+  jobs:
+  - job: Build
+    pool:
+      name: DatatypeChannels-ASB-Build
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: false
+    - pwsh: |
+        dotnet --version
+        if ($LASTEXITCODE -ne 0) { throw 'Preinstall the SDK required by global.json. No SDK is downloaded.' }
+        dotnet fsi tests/Pipeline.Tests.fsx "$(Agent.TempDirectory)/pipeline-contracts"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        dotnet fsi eng/RunPipeline.fsx build "$(Build.ArtifactStagingDirectory)/drop"
+        exit $LASTEXITCODE
+      displayName: Restore, publish build output, and pack
+      env:
+        NUGET_RESTORE_SOURCE: $(NUGET_RESTORE_SOURCE)
+    - publish: $(Build.ArtifactStagingDirectory)/drop
+      artifact: drop
+      displayName: Retain package and compiled integration tests
+
+- stage: Integration
+  dependsOn: Build
+  lockBehavior: sequential
+  condition: |
+    and(succeeded(),
+        eq(variables['Build.Repository.Name'], 'Azure/DatatypeChannels.ASB'),
+        in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
+        or(eq(variables['Build.SourceBranch'], 'refs/heads/master'),
+           startsWith(variables['Build.SourceBranch'], 'refs/tags/')))
+  jobs:
+  - job: Integration
+    pool:
+      name: DatatypeChannels-ASB-Trusted
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      clean: true
+      fetchDepth: 0
+      fetchTags: true
+      persistCredentials: false
+    - pwsh: |
+        dotnet fsi eng/RunPipeline.fsx check-trust
+        exit $LASTEXITCODE
+      displayName: Require code already on master before Azure login
+    - download: current
+      artifact: drop
+    - task: AzureCLI@2
+      displayName: Test against existing Service Bus namespace
+      inputs:
+        azureSubscription: DatatypeChannels-ASB-Integration
+        scriptType: pscore
+        scriptLocation: inlineScript
+        addSpnToEnvironment: false
+        useGlobalConfig: false
+        visibleAzLogin: false
+        inlineScript: |
+          dotnet fsi eng/RunPipeline.fsx test "$(Pipeline.Workspace)/drop"
+          exit $LASTEXITCODE
+      env:
+        SERVICE_BUS_NAMESPACE: $(SERVICE_BUS_NAMESPACE)
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: VSTest
+        testResultsFiles: '$(Pipeline.Workspace)/drop/results/*.trx'
+        failTaskOnFailedTests: true
+        failTaskOnFailureToPublishResults: true
+        failTaskOnMissingResultsFile: true
+
+- ${{ if eq(parameters.publishPackage, true) }}:
+  - stage: Release
+    dependsOn:
+    - Build
+    - Integration
+    condition: |
+      and(succeeded(),
+          eq(dependencies.Integration.result, 'Succeeded'),
+          eq(variables['Build.Repository.Name'], 'Azure/DatatypeChannels.ASB'),
+          eq(variables['Build.Reason'], 'Manual'),
+          startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+    variables:
+    - group: DatatypeChannels-ASB-Release
+    jobs:
+    - deployment: Publish
+      pool:
+        name: DatatypeChannels-ASB-Trusted
+      workspace:
+        clean: all
+      environment: DatatypeChannels-ASB-Release
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              clean: true
+              fetchDepth: 0
+              fetchTags: true
+              persistCredentials: false
+            - download: none
+            - download: current
+              artifact: drop
+            - pwsh: |
+                dotnet fsi eng/RunPipeline.fsx publish "$(Pipeline.Workspace)/drop"
+                exit $LASTEXITCODE
+              displayName: Publish this run's tested package without rebuilding
+              env:
+                RELEASE_REQUESTED: 'true'
+                NUGET_REPO_URL: $(NUGET_REPO_URL)
+                NUGET_REPO_KEY: $(NUGET_REPO_KEY)
