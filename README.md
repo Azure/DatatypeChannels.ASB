@@ -15,54 +15,22 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 
 > Loosely based on [FsBunny](https://et1975.github.io/FsBunny) - F# API for event streaming over RMQ.
 
-## Delivery ownership and settlement
+## Consumer usage
 
-For PeekLock consumers, a redelivery of an active broker message replaces its
-transport context and renewal task without returning another application envelope.
-Renewal and settlement use the receiver that delivered the current lock token, even
-after a receiver is recreated. Replacement, ACK, NACK and disposal are serialized.
-An older delivery count arriving late cannot replace a newer tracked delivery.
-`IgnoreDuplicates = false` rejects active duplicates instead of replacing them.
+PeekLock consumers renew replacement deliveries without emitting duplicate work.
+`IgnoreDuplicates = false` rejects active duplicates; distinct broker messages
+sharing an active message ID are always rejected without settlement.
 
-Broker identity includes the namespace, entity, message ID and sequence number.
-Different broker messages sharing a message ID are not silently acknowledged. An
-active ID collision is rejected without settlement because the string-based
-ACK/NACK API cannot address two active messages with the same ID. After the first
-message finishes, a different sequence number can be admitted normally.
+Call `Ack` after processing and durable result publication. It ends local ownership
+even if settlement fails. `Nack` permits another attempt; `PassiveNack = true` skips
+broker abandonment. Both await cleanup and surface errors, including `MessageLockLost`.
+Duplicate tracking is in-memory, not an exactly-once guarantee. Completed identities
+remain until broker expiry (at least five minutes after ACK), or disposal for dead letters.
 
-Call `Ack` only after application processing and any required durable result
-publication have completed. ACK ends local application ownership even when broker
-settlement fails; same-message redeliveries are then settled without repeating
-application work. Completed identities are retained until broker expiry, with at
-least five minutes of grace after ACK for overlapping receives. Dead-letter
-identities are retained for the consumer's lifetime because those messages do not
-expire. Expired entries are removed on subsequent receives/ACKs. Long message TTLs
-and long-lived dead-letter consumers therefore retain more identities in memory.
-This tracking is local to one consumer, not durable or distributed exactly-once
-processing.
-
-`Nack` releases local ownership and permits a later application attempt.
-`PassiveNack = true` skips broker abandonment but still stops and awaits renewal.
-ACK/NACK always release their context, including when settlement fails. Settlement
-exceptions, including `ServiceBusException` with reason `MessageLockLost`, remain
-visible to the caller. A caller may handle that specific reason after terminal
-application work; it must not suppress unrelated failures. If settlement and
-renewal both fail, cleanup reports both exceptions.
-
-Unexpected background renewal failures also fault the optional
-`ConsumerSupervision.Completion : Task` contract on consumers returned by
-`Channels`. Observe that task and cancel outstanding application work on failure.
-It completes normally on disposal. Existing `Consumer<'T>` and `ChannelOptions`
-contracts are unchanged. Definitive renewal lock loss stops only that delivery
-generation; transient broker errors retry at the existing renewal interval.
-These events and delivery replacement are reported through the supplied `Log`.
-
-Application deadlines remain caller-owned. A replacement delivery does not reset
-a deadline or create another invocation. At the original deadline, cancel and
-await application work, then NACK or dispose the consumer to stop renewal.
-Stopping transport renewal does not itself cancel application work.
-Disposal also fences pending receives: a receive that finishes after disposal
-cannot register renewal or return new work.
+Observe `ConsumerSupervision.Completion` for unexpected renewal failures and use
+the supplied `Log` for transport diagnostics. Application deadlines and cancellation
+remain caller-owned. NACK or dispose after stopping application work to end renewal;
+disposal also prevents pending receives from admitting new work.
 
 ## Building
 Pre-requisites:
@@ -83,16 +51,13 @@ Where
 dotnet fsi build.fsx
 ```
 
-The consumer unit regressions use fake Service Bus receivers and require no Azure
-credentials or resources:
+Run consumer unit tests without Azure credentials or resources:
 
 ```
 dotnet test --filter "FullyQualifiedName~consumer"
 ```
 
-The existing `integration` tests still require a configured Service Bus namespace.
-Their cloud setup is deferred until a selected integration test runs, so discovery
-and filtered unit runs do not provision resources.
+Integration tests require a configured Service Bus namespace.
 
 
 ## Contributing
