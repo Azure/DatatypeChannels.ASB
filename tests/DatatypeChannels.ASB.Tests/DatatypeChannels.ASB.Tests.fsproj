@@ -6,6 +6,7 @@
         <GenerateProgramFile>false</GenerateProgramFile>
     </PropertyGroup>
     <ItemGroup>
+        <Compile Include="ConsumerTests.fs" />
         <Compile Include="Tests.fs" />
         <Compile Include="Main.fs" />
         <Content Include="local.settings.json">

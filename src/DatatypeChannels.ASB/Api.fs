@@ -47,6 +47,12 @@ type Consumer<'msg> =
     abstract member Ack : string -> Task<unit>
     abstract member Nack : string -> Task<unit>
 
+/// Optional supervision contract implemented by consumers returned by Channels.
+/// Completes on disposal, or faults promptly when a background renewal fails unexpectedly.
+/// Observe this task and cancel outstanding application work on failure.
+type ConsumerSupervision =
+    abstract Completion: Task
+
 /// Assembles user message from AMQP properties
 type OfReceived<'msg> = OfReceived of (ServiceBusReceivedMessage -> 'msg)
 

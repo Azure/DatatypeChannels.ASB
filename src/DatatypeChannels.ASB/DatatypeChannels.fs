@@ -48,6 +48,7 @@ module Channels =
             consumerOptions.Prefetch |> Option.iter (fun v -> receiveOptions.PrefetchCount <- int v)
             receiveOptions.IgnoreDuplicates <- consumerOptions.IgnoreDuplicates
             receiveOptions.PassiveNack <- consumerOptions.PassiveNack
+            receiveOptions.Log <- log
             Consumer.mkNew receiveOptions renew ofRecevied withClient withBindings
 
         { new Channels with
