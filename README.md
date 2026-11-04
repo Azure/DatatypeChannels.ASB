@@ -55,11 +55,12 @@ dotnet fsi build.fsx
 ```
 
 CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
-validation (`azure-pipelines-pr.yml`) and official trusted integration/package
-production (`azure-pipelines.yml`). They use preinstalled SDK tools, an existing
-namespace, and Azure Pipelines authentication; signing and resource authorization
-require administrator setup. Both invoke `build.fsx -t ci` through the shared
-YAML stage; trusted jobs use `check-trust`, `integration`, and `publish`.
+validation (`.pipelines/azure-pipelines-pr.yml`) and official trusted
+integration/package production (`.pipelines/azure-pipelines.yml`). They use
+preinstalled SDK tools, an existing namespace, and Azure Pipelines
+authentication; signing and resource authorization require administrator setup.
+Both invoke `build.fsx -t ci` through the shared YAML stage; trusted jobs use
+`check-trust`, `integration`, and `publish`.
 Release is an explicitly opted-in manual master run, not a Git tag trigger.
 The `publish` target validates the tested artifact without building or packing;
 the native `1ES.PublishNuGet@1` task performs the actual push through an approved

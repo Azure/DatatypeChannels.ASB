@@ -33,4 +33,4 @@ extends:
         os: windows
     stages:
     # The shared stage invokes the credential-free build.fsx ci target graph.
-    - template: eng/pipelines/build.yml@self
+    - template: /.pipelines/build.yml@self

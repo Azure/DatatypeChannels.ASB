@@ -266,14 +266,33 @@ finally
     Directory.Delete(fixtureRoot, true)
 
 let root = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
-let yaml = File.ReadAllText(Path.Combine(root, "azure-pipelines.yml")).Replace("\r\n", "\n")
+let yaml =
+    File.ReadAllText(Path.Combine(root, ".pipelines/azure-pipelines.yml")).Replace("\r\n", "\n")
 let readOptional name =
     let path = Path.Combine(root, name)
     if File.Exists path then (File.ReadAllText path).Replace("\r\n", "\n") else ""
 
-let prYaml = readOptional "azure-pipelines-pr.yml"
-let buildYaml = readOptional "eng/pipelines/build.yml"
+let prYaml = readOptional ".pipelines/azure-pipelines-pr.yml"
+let buildYaml = readOptional ".pipelines/build.yml"
 let combinedYaml = String.concat "\n" [yaml; prYaml; buildYaml]
+
+for path in ["azure-pipelines.yml"; "azure-pipelines-pr.yml"; "eng/pipelines/build.yml"] do
+    check $"pipeline YAML moved out of {path}" (not (File.Exists(Path.Combine(root, path))))
+let dependabot = readOptional ".github/dependabot.yml"
+check "Dependabot configuration retained"
+    (dependabot =
+        ("""version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+""").Replace("\r\n", "\n"))
 
 // These are repository contracts, not a YAML parser or 1ES expansion engine.
 let section (start: string) (finish: string) (text: string) =
@@ -301,7 +320,7 @@ for name, text in ["trusted", yaml; "PR", prYaml] do
          && text.Contains("\n    stages:\n")
          && not (text.Contains("\nstages:")))
     check $"{name} shares only build stage"
-        (text.Contains("- template: eng/pipelines/build.yml@self"))
+        (text.Contains("- template: /.pipelines/build.yml@self"))
     check $"{name} explicit Windows pool and source analysis"
         (text.Contains("\n    pool:\n      name: $(")
          && text.Contains("\n      image: $(")

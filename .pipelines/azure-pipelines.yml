@@ -45,7 +45,7 @@ extends:
       sbom:
         enabled: true
     stages:
-    - template: eng/pipelines/build.yml@self
+    - template: /.pipelines/build.yml@self
       parameters:
         condition: >-
           and(succeeded(),

@@ -17,14 +17,16 @@ work-item project authorizes public-repository builds.
 
 | ADO definition | YAML path | Governed template | Authorization |
 |---|---|---|---|
-| PR validation | `/azure-pipelines-pr.yml` | `v1/1ES.Unofficial.PipelineTemplate.yml@1esPipelines` | Untrusted, isolated pools; no Azure/release/signing resources |
-| Trusted integration and package production | `/azure-pipelines.yml` | `v1/1ES.Official.PipelineTemplate.yml@1esPipelines` | Protected refs, restricted queues and approved resources |
+| PR validation | `/.pipelines/azure-pipelines-pr.yml` | `v1/1ES.Unofficial.PipelineTemplate.yml@1esPipelines` | Untrusted, isolated pools; no Azure/release/signing resources |
+| Trusted integration and package production | `/.pipelines/azure-pipelines.yml` | `v1/1ES.Official.PipelineTemplate.yml@1esPipelines` | Protected refs, restricted queues and approved resources |
 
 Both use the Azure Repos resource alias `1esPipelines`, repository
 `1ESPipelineTemplates/1ESPipelineTemplates`, and `refs/tags/release`. Their stages
 are under `extends.parameters.stages`. Only the credential-free build stage in
-`eng/pipelines/build.yml` is shared. Do not authorize the PR definition for the
-trusted pool, integration connection, release group/environment, or signing.
+`.pipelines/build.yml` is shared. Select the entrypoint paths above when creating
+or updating the ADO definitions; all pipeline YAML lives under `.pipelines`.
+Do not authorize the PR definition for the trusted pool, integration connection,
+release group/environment, or signing.
 The unofficial definition never supplies an artifact to the official one.
 There is no pipeline-completion release trigger.
 
@@ -194,10 +196,10 @@ Integration and Release use that exact version and artifact, not a new counter
 or package at release time.
 
 Before cutover, inspect the destination feed and choose a nonnegative offset
-in the trusted `azure-pipelines.yml` if needed to ensure the next patch is above every
-previously published version for that major/minor. Do not reuse the old GitHub
-counter blindly. The sum must fit an unsigned 32-bit integer. Do not allow
-queue-time overrides of version or security variables.
+in the trusted `.pipelines/azure-pipelines.yml` if needed to ensure the next patch
+is above every previously published version for that major/minor. Do not reuse
+the old GitHub counter blindly. The sum must fit an unsigned 32-bit integer.
+Do not allow queue-time overrides of version or security variables.
 
 ## Required administrator configuration
 
