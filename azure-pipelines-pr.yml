@@ -32,4 +32,5 @@ extends:
         image: $(PR_SOURCE_ANALYSIS_POOL_IMAGE)
         os: windows
     stages:
+    # The shared stage invokes the credential-free build.fsx ci target graph.
     - template: eng/pipelines/build.yml@self

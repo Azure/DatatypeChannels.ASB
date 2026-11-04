@@ -2,7 +2,7 @@
 # Required pool/image variables and signing prerequisites: docs/azure-pipelines.md.
 parameters:
 - name: publishPackage
-  displayName: Publish the tested package (manual tag runs only)
+  displayName: Release this run's tested package (manual master runs only)
   type: boolean
   default: false
 
@@ -10,9 +10,6 @@ trigger:
   branches:
     include:
     - master
-  tags:
-    include:
-    - '*'
 
 pr: none
 
@@ -29,6 +26,8 @@ resources:
 extends:
   template: v1/1ES.Official.PipelineTemplate.yml@1esPipelines
   parameters:
+    featureFlags:
+      branchValidation: enforceInReleaseJobs
     pool:
       name: $(TRUSTED_POOL_NAME)
       image: $(TRUSTED_POOL_IMAGE)
@@ -43,6 +42,8 @@ extends:
       codeSignValidation:
         enabled: true
         break: true
+      sbom:
+        enabled: true
     stages:
     - template: eng/pipelines/build.yml@self
       parameters:
@@ -50,8 +51,7 @@ extends:
           and(succeeded(),
               eq(variables['Build.Repository.Name'], 'Azure/DatatypeChannels.ASB'),
               in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
-              or(eq(variables['Build.SourceBranch'], 'refs/heads/master'),
-                 startsWith(variables['Build.SourceBranch'], 'refs/tags/')))
+              eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
     - stage: Integration
       dependsOn: Build
@@ -60,8 +60,7 @@ extends:
         and(succeeded(),
             eq(variables['Build.Repository.Name'], 'Azure/DatatypeChannels.ASB'),
             in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
-            or(eq(variables['Build.SourceBranch'], 'refs/heads/master'),
-               startsWith(variables['Build.SourceBranch'], 'refs/tags/')))
+            eq(variables['Build.SourceBranch'], 'refs/heads/master'))
       jobs:
       - job: Integration
         workspace:
@@ -73,7 +72,7 @@ extends:
           fetchTags: true
           persistCredentials: false
         - pwsh: |
-            dotnet fsi eng/RunPipeline.fsx check-trust
+            dotnet fsi build.fsx -t check-trust
             exit $LASTEXITCODE
           displayName: Require code already on master before Azure login
         - download: current
@@ -88,9 +87,10 @@ extends:
             useGlobalConfig: false
             visibleAzLogin: false
             inlineScript: |
-              dotnet fsi eng/RunPipeline.fsx test "$(Pipeline.Workspace)/drop"
+              dotnet fsi build.fsx -t integration
               exit $LASTEXITCODE
           env:
+            ARTIFACT_DIRECTORY: $(Pipeline.Workspace)/drop
             SERVICE_BUS_NAMESPACE: $(SERVICE_BUS_NAMESPACE)
         - task: PublishTestResults@2
           condition: succeededOrFailed()
@@ -111,7 +111,7 @@ extends:
               eq(dependencies.Integration.result, 'Succeeded'),
               eq(variables['Build.Repository.Name'], 'Azure/DatatypeChannels.ASB'),
               eq(variables['Build.Reason'], 'Manual'),
-              startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+              eq(variables['Build.SourceBranch'], 'refs/heads/master'))
         variables:
         - group: DatatypeChannels-ASB-Release
         jobs:
@@ -135,11 +135,22 @@ extends:
                 # 1ES owns download and provenance/signature validation.
                 # Release jobs cannot check out source; use tools from this drop.
                 - pwsh: |
-                    dotnet fsi eng/RunPipeline.fsx publish "$(Pipeline.Workspace)/drop"
+                    dotnet fsi build.fsx -t publish
                     exit $LASTEXITCODE
                   workingDirectory: $(Pipeline.Workspace)/drop
-                  displayName: Publish this run's tested package without rebuilding
+                  displayName: Validate this run's tested package for governed publication
                   env:
+                    ARTIFACT_DIRECTORY: $(Pipeline.Workspace)/drop
+                    # The stage requires Integration.result == Succeeded above.
+                    INTEGRATION_SUCCEEDED: 'true'
                     RELEASE_REQUESTED: 'true'
-                    NUGET_REPO_URL: $(NUGET_REPO_URL)
-                    NUGET_REPO_KEY: $(NUGET_REPO_KEY)
+                    NUGET_PUBLISH_SERVICE_CONNECTION: $(NUGET_PUBLISH_SERVICE_CONNECTION)
+                # Supported release-job hook: 1ES validates NuGet paths and owns the push.
+                - task: 1ES.PublishNuGet@1
+                  displayName: Publish the validated package using the approved NuGet connection
+                  inputs:
+                    useDotNetTask: true
+                    nuGetFeedType: external
+                    publishFeedCredentials: $(NUGET_PUBLISH_SERVICE_CONNECTION)
+                    packagesToPush: '$(Pipeline.Workspace)/drop/nuget/*.nupkg'
+                    packageParentPath: $(Pipeline.Workspace)/drop/nuget

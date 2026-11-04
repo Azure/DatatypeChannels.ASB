@@ -18,11 +18,22 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 ## Building
 Pre-requisites:
 - .NET SDK matching `global.json` (10.0.201 with latest patch in that feature band)
-- Azure CLI
+- Existing F# build dependencies from an approved NuGet source/cache (see the
+  [setup guide](docs/azure-pipelines.md#required-administrator-configuration))
+- Azure CLI only for explicitly requested local provisioning/integration
 
 Build without Azure access:
 ```
-dotnet build
+dotnet fsi build.fsx -t build
+```
+
+`build.fsx` is the single entrypoint for local and pipeline orchestration, using
+FAKE targets with separate dependency graphs. Discover the entire surface without
+credentials, local settings or target execution:
+```
+dotnet fsi build.fsx --help
+dotnet fsi build.fsx --list
+dotnet fsi build.fsx -t graph ci integration publish test
 ```
 
 The test suite is an integration suite. It creates Service Bus messaging entities
@@ -32,7 +43,6 @@ not an offline unit-test suite.
 For local integration testing only, the following explicit initialization
 **provisions Azure resources**. Do not run it for an offline build or in CI:
 ```
-dotnet tool restore
 dotnet fsi build.fsx -t init <YOUR_LOCATION> <YOUR_RG> <YOUR_NAMESPACE>
 ```
 Where 
@@ -48,8 +58,14 @@ CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
 validation (`azure-pipelines-pr.yml`) and official trusted integration/package
 production (`azure-pipelines.yml`). They use preinstalled SDK tools, an existing
 namespace, and Azure Pipelines authentication; signing and resource authorization
-require administrator setup. Neither runs the local `init` target. The legacy `initCI`,
-`ci`, `publish`, and `release` targets are retired. See the
+require administrator setup. Both invoke `build.fsx -t ci` through the shared
+YAML stage; trusted jobs use `check-trust`, `integration`, and `publish`.
+Release is an explicitly opted-in manual master run, not a Git tag trigger.
+The `publish` target validates the tested artifact without building or packing;
+the native `1ES.PublishNuGet@1` task performs the actual push through an approved
+NuGet service connection after release approvals.
+Neither definition runs local `init`; `initCI` remains retired and fails closed.
+The default local target is still `test`, which contacts Azure. See the
 [pipeline setup and cutover guide](docs/azure-pipelines.md) for administrator
 prerequisites and release authorization.
 

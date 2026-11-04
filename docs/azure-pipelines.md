@@ -35,16 +35,19 @@ There is no pipeline-completion release trigger.
 | PR targeting master (unofficial definition) | Yes, no application credentials | No | Never |
 | Draft PR | Not automatically | No | Never |
 | Master push | Yes | Yes | Never |
-| Tag push | Yes | Only if commit is already on master | Never |
-| Manual master run | Yes | Yes | Never |
-| Manual tag run, default parameters | Yes | Only if commit is already on master | Never |
-| Manual tag run, `publishPackage: true` | Yes | Required | Only after release approval |
+| Tag push | Not triggered | No | Never |
+| Manual master run, default parameters | Yes | Yes | Never |
+| Manual master run, `publishPackage: true` | Yes | Required | Only after release approvals |
+| Manual tag run (any parameters) | Custom stages skipped | No | Never |
 | Manual unofficial run | Yes, candidate only | No | Never |
 | Manual feature branch run in official definition | Custom stages skipped; do not authorize/queue | No | Never |
 
-`eng/RunPipeline.fsx` uses only the SDK and .NET libraries, with no FAKE or tool
-restore. It restores the existing solution dependencies, generates package
-metadata, publishes Release build output, and packs only the library. It retains
+`build.fsx` is the single entrypoint for local and pipeline orchestration.
+It uses the existing FAKE target engine, not a wrapper or a separate dispatcher.
+The two YAML entrypoints remain separate trust boundaries, but both invoke
+`dotnet fsi build.fsx -t ci` through the shared stage. This graph checks the
+pipeline contracts, generates metadata, restores existing solution dependencies,
+publishes Release build output, and packs only the already built library. It retains
 both `nuget/` and compiled `tests/` in the same run's `drop` pipeline artifact.
 The build declares `templateContext.outputs` with `output: pipelineArtifact`
 instead of publishing directly, so 1ES controls output scanning and metadata.
@@ -57,29 +60,138 @@ PR packages are **untested candidates**, not releasable outputs.
 The release deployment is a production `releaseJob`, with a governed
 `pipelineArtifact` input explicitly selecting `buildType: current`. 1ES owns
 the download and source-build/SBOM/signature checks; no validation bypass is
-configured. The release stage consumes the same run's artifact. It validates the package
-filename and nuspec ID/version, then pushes that package without rebuilding or
-restoring. No duplicate-skip option hides publication errors. Repeating a
+configured. The release stage consumes the same run's artifact. `build.fsx -t publish`
+validates the package
+filename and nuspec ID/version, the package SHA256 recorded at build time, and
+equality of the packaged library and integration-test library. Then the supported
+**`1ES.PublishNuGet@1` task**, not a raw push hidden inside an F# script, publishes
+that package using an approved external NuGet service connection and preinstalled
+dotnet. No duplicate-skip option hides publication errors. Repeating a
 successful publish will fail on an immutable feed, so inspect the existing
 package before retrying. Failed or skipped integration cannot authorize release.
 1ES release jobs cannot check out source. The build therefore includes only
-`eng/Pipeline.fsx`, `eng/RunPipeline.fsx`, `RELEASE_NOTES.md`, and `global.json`
-alongside the package/tests. Publication runs these tools **from the drop**,
+`build.fsx`, `RELEASE_NOTES.md`, `global.json`, and `package.sha256`
+alongside the package/tests. Publication runs the same entrypoint **from the drop**,
 retaining SDK selection and version validation without fetching or rebuilding.
+The image must already contain the script's pinned FAKE/Farmer/configuration
+dependencies and their transitive closure; see setup below. The hash file is a
+consistency check, not a signature or a substitute for governed provenance.
 Ancestry validation remains in the mandatory Integration stage before Azure
 login (and again in the test helper); it is not repeated in the checkout-free
-publisher. Do not run that publisher independently as a release workflow.
+release preparation graph. `publish-check` also requires `INTEGRATION_SUCCEEDED=true`, mapped only
+by the already-gated release job. That assertion is not an approval mechanism:
+the official stage dependency and external checks remain authoritative.
+Running the F# target alone does not publish or obtain credentials.
+
+### Release guidance: requirements versus choices
+
+The inspected 1ES `release` source was
+`77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2` on 2026-11-04. EngineeringHub's
+[NuGet guide](https://aka.ms/1espt/outputs/nuget) and overview returned HTTP 403
+after redirect, but the template implementation and repository feature guidance
+were readable. These findings are based on source, not an assumed exemption:
+
+- **Enforced shape:** [ReleaseJob.yml][release-job] requires production
+  classification/official templates and rejects job `outputs`.
+  [ReleaseSteps.yml][release-steps] enforces no source checkout in this custom
+  workflow and processes governed inputs before user steps. We use an ordinary
+  Release stage containing a production deployment `releaseJob`, not the
+  separate EV2-oriented `releaseStage` workflow.
+- **Allowed input:** [pipelineArtifact.yml][artifact-input] explicitly supports
+  `buildType: current` (also its default). The current official run's `drop`
+  is therefore used; no arbitrary run selection, unofficial artifact, cache or
+  direct download task is introduced. Input processing applies signed-SBOM,
+  source-build and configured signature checks. [ValidateSourceBuild.yml][source-build]
+  and its implementation check governed origin/artifact type; exact enforcement
+  modes and organization overrides must be confirmed during ADO expansion.
+- **Allowed actions:** [UserProvidedReleaseSteps.yml][release-user-steps] rejects
+  build/output/direct-download/caching task patterns and direct `NuGetCommand`
+  push; it explicitly recognizes **`1ES.PublishNuGet@1`**. It also permits
+  ordinary custom script steps; this is not permission to hide builds or new
+  dependency downloads in them. Our F# step only checks already-built inputs
+  using preinstalled dependencies. The NuGet hook runs
+  [Outputs/nuget.yml][nuget-output], including path validation and applicable
+  SBOM handling; its [SBOM preparation][nuget-sbom] copies packages to temporary
+  storage rather than repacking the input nupkg. No signing, packing, application
+  restore or build is requested in Release.
+- **Minimal script/task boundary:** `build.fsx` remains the only repository
+  orchestration script and owns the release preflight/identity/hash graph.
+  Actual publication is intentionally a native governed YAML task. Making
+  `build.fsx` perform a raw `dotnet nuget push` would not establish NuGet
+  compliance merely because a production job contains it. No second release
+  script or dispatcher is introduced.
+- **Trigger is our explicit choice, not a claimed blanket tag ban:** release is
+  now an opted-in **manual master run** with Build → Integration → Release,
+  independent external approvals, and the same run's tested drop. The inspected
+  [branch validator][branch-validate] actually skips tag validation, and its
+  [provider support][branch-support] does not cover public github.com. Requesting
+  `branchValidation: enforceInReleaseJobs` is not proof of protection for this
+  repository. Protected master, restricted queues and resource approval checks
+  are mandatory external setup here. Tags no longer select builds/releases.
+- **Credentials:** `useDotNetTask: true` and `nuGetFeedType: external` select the
+  supported 1ES DotNet push implementation without a NuGet.exe installer.
+  `publishFeedCredentials` identifies an administrator-selected NuGet service
+  connection, which owns the destination URL and API key. The
+  [Microsoft DotNet task source][dotnet-push] supports external API-key
+  connections. No API key is mapped to F#, echoed by repository commands or
+  stored in the repository. The native task's secret handling and service
+  connection authorization still require live policy review.
+
+The public [Management preview stages][management-preview] at
+`f8642c4a1c97ca68f4f23032b7b25cee6975e864` were checked again. They publish
+PowerShell dev/preview modules from a build job; they are **not** a production
+`releaseJob` example or evidence that direct scripting is approved for this
+NuGet release. Their tool installers, token export and dependency replication
+were not copied. No other production release YAML was present in that public
+tree; private Management release policy was not assumed.
 
 No documentation deployment existed in the replaced Actions `ci`/`release`
 graph; local documentation targets remain unchanged.
+
+### One target surface, separate dependency graphs
+
+All targets have descriptions in FAKE's listing. Introspection does not load
+release notes or settings, look up secrets, authenticate, provision, publish, or
+execute any inspected target bodies. The `graph` target calls FAKE's own graph
+printer; it has no build dependencies.
+
+```powershell
+dotnet fsi build.fsx --help
+dotnet fsi build.fsx --list
+dotnet fsi build.fsx -t graph ci integration publish test
+dotnet fsi build.fsx --write-info "$env:TEMP/asb-targets.json"
+```
+
+| Target | Hard dependency graph / behavior |
+|---|---|
+| `check` | Offline contract checks only; requires external scratch `CHECK_DIRECTORY` |
+| `ci` | `ci-preflight` and `check` → `ci-meta` → `ci-restore` → `ci-build` → `ci-package` → `ci-stage` → `ci` |
+| `check-trust` | Trusted repository/master/reason and Git ancestry; executed before AzureCLI login |
+| `integration` | `check-trust` → `integration-artifact` → `integration`; no build/pack |
+| `publish` | `publish-check` → `publish-artifact` → `publish`; checks readiness for the native NuGet task; **no checkout, Git, clean, restore, build, pack, live tests or push** |
+| `release` | Alias depending only on `publish` |
+| Local `test` (default) | Existing `clean` → `restore` → `meta` → `build` → `test`; **contacts Azure** |
+| Local `package` | Existing local build graph → `package`; development output, not official release input |
+| Local `init` | Explicit developer provisioning only; never a dependency of CI or introspection |
+
+For `ci`, set `ARTIFACT_DIRECTORY`, `CHECK_DIRECTORY`, `BUILD_BUILDID`,
+`PACKAGE_PATCH_OFFSET` and `NUGET_RESTORE_SOURCE`; YAML provides these through
+definition variables, built-in variables and step environment mappings.
+Integration and publication select the same run's drop with `ARTIFACT_DIRECTORY`.
+Privileged target bodies repeat their authorization guards because FAKE permits
+`--single-target`; skipping dependency execution must not bypass those guards.
+As before, local documentation needs the existing `fsdocs` tool manifest restored
+from an approved source; no installer was added to pipeline targets.
 
 ### Versions and metadata
 
 The release-note major/minor and any prerelease suffix are preserved; the patch
 is `Build.BuildId + PACKAGE_PATCH_OFFSET`. This replaces `github.run_number`
 while preserving the run-number version convention, authorship, release notes,
-license, project/repository URLs and package tags. Tags select a commit, not the
-package version. A manual release is a new run with a new version.
+license, project/repository URLs and package tags. Git tags are not consulted.
+A manually opted-in master run creates a new version once during Build;
+Integration and Release use that exact version and artifact, not a new counter
+or package at release time.
 
 Before cutover, inspect the destination feed and choose a nonnegative offset
 in the trusted `azure-pipelines.yml` if needed to ensure the next patch is above every
@@ -137,6 +249,28 @@ queue-time overrides of version or security variables.
    The build passes that source explicitly; it must work without exposing
    private feed credentials to PR jobs. Configure approved network access.
    No package sources, feeds or tool installers are provisioned by this YAML.
+
+   **F# script runtime on every image, including checkout-free release:** provision
+   the `build.fsx` NuGet references and their transitive dependencies into the
+   executing account's cache from an approved source before enabling jobs.
+   These are the existing FAKE, Farmer, Microsoft.Extensions.Configuration and
+   StructuredLogger dependencies, not new application dependencies. Their current
+   resolved versions are now explicit: FAKE **6.2.0**, Farmer **1.9.36**,
+   configuration JSON/binder **10.0.14**, StructuredLogger **2.2.291**.
+   The former explicit logger version 2.2.243 was unavailable and caused
+   NU1603; 2.2.291 was the resolver's existing fallback. Pinning the formerly
+   floating references also avoids selecting different tools at release time.
+   `Directory.Packages.props`, the SDK pin and application dependencies are unchanged.
+
+   FSI resolves `#r "nuget: ..."` **before** target execution, including help.
+   `NUGET_RESTORE_SOURCE` controls solution restore, not FSI's resolver; configure
+   the image's approved NuGet sources/cache separately. A bare SDK image is not
+   sufficient. Do not grant feed credentials to PR jobs or add public fallback
+   installers/downloads to make resolution pass. Prefer prewarmed images and
+   restrict release network access to approved publishing/compliance endpoints,
+   with dependency acquisition disabled during release (prewarm the complete
+   closure rather than enabling a restore fallback). Missing script
+   dependencies fail in FSI before targets; missing CLI tools fail explicitly.
 4. **Existing test namespace and identity.** Set nonsecret
    `SERVICE_BUS_NAMESPACE` to an existing public-Azure Service Bus FQDN such as
    `your-test-namespace.servicebus.windows.net`. Standard or Premium is required
@@ -155,27 +289,32 @@ queue-time overrides of version or security variables.
    Agents must not carry other ambient Azure identities. This connection name
    is a configuration contract, not evidence that a connection exists. Authorize
    it for the trusted definition only.
-6. **Trust controls outside YAML.** Protect master and **all tags** against
-   unreviewed changes and restrict tag creation/deletion to maintainers.
+6. **Trust controls outside YAML.** Protect master against unreviewed changes.
    Require maintainer approval on the integration connection and every trusted
    pool, including source analysis. Protect these before enabling the official
    definition: 1ES-injected jobs can run before repository-script trust checks.
    Use branch-control checks for master, rejecting unknown protection state.
-   For tag runs, verify the protected tag and its commit against master in the
-   resource approval; do not assume ADO branch-control checks establish GitHub
-   tag protection. The script also enforces ancestry before login.
+   Validate the protected master commit in resource approvals; do not assume
+   1ES's provider-specific classification check covers public GitHub.
+   The script also enforces master ancestry before login.
    Configure an exclusive lock with sequential behavior for integration access,
    or otherwise serialize runs: existing tests share fixed queue names.
    Never treat a condition in contributor-editable YAML as an authorization
    boundary.
 7. **Release resources.** Precreate the environment
    `DatatypeChannels-ASB-Release` and variable group with the same name.
-   Set group variable `NUGET_REPO_URL` to the intended HTTPS feed (for the
-   existing public package, `https://api.nuget.org/v3/index.json`) and secret
-   `NUGET_REPO_KEY` to a package-scoped, expiring API key. The key must exist
-   only in ADO secret storage and is mapped only in the release step. Require
-   independent maintainer approvals that validate the protected tag and restricted
-   trusted-definition permissions on **both** the environment and secret variable group.
+   Set nonsecret group variable `NUGET_PUBLISH_SERVICE_CONNECTION` to an
+   administrator-approved **NuGet external-feed service connection**. That
+   connection must specify the intended HTTPS destination and a package-scoped,
+   expiring API key in ADO secret storage. The YAML deliberately chooses no
+   feed URL, connection name, identity or key. For the existing public package,
+   confirm whether the destination remains NuGet.org before configuring it.
+   Retire the previous proposed raw `NUGET_REPO_URL`/`NUGET_REPO_KEY` mappings;
+   do not put those secrets into the script environment.
+   Require independent maintainer approvals that validate protected master and
+   restricted trusted-definition permissions on the environment, release
+   configuration group and publishing connection. Authorize the publishing
+   connection for the official definition only; do not grant all pipelines access.
    Disallow self-approval and unauthorized check bypass. Naming an environment
    in YAML does not create its approval policy. Use an environment with no VM or
    Kubernetes resource attached; it is an approval boundary, not a deployment
@@ -188,8 +327,8 @@ queue-time overrides of version or security variables.
    to access any protected resource. Limit job token scope and repository access;
    "credential-free" means no application, Azure, signing or publishing secrets,
    not that ADO can build without its own restricted job token.
-   All PRs, including same-repository PRs, stay unofficial; trusted tests run after merge or on a
-   protected tag. Do not switch to `pull_request_target`.
+   All PRs, including same-repository PRs, stay unofficial; trusted tests run
+   only on master. Do not switch to `pull_request_target`.
 9. **Signing and governed outputs — unresolved prerequisite.** Extending the
    official template is **not** a signing implementation. The trusted YAML
    explicitly enables breaking code-sign validation; it does not supply an ESRP
@@ -211,21 +350,22 @@ queue-time overrides of version or security variables.
 
 Resources and branch policies are the security boundary, since PRs can modify
 scripts and YAML. Do not enable a connection or secret group until its checks
-are in place. If the organization's checks cannot safely authorize tag refs,
-leave release disabled and resolve that policy with administrators.
+are in place. If the organization's checks cannot safely authorize protected
+master on this public GitHub repository, leave release disabled.
 
 ## Cutover and release procedure
 
 1. Review the draft PR and administrator setup independently. Keep the removed
-   GitHub federation removed. Do not run the legacy `initCI`/`ci`/`release`/
-   `publish` targets; they now fail with a migration message. Local `init`
+   GitHub federation removed. `initCI` remains retired and fails with a migration
+   message. `ci`, `release` and `publish` now use the graphs above; do not treat
+   a standalone local release-preflight invocation as release authorization. Local `init`
    remains an explicit provisioning operation for developers, not a CI step.
 2. Administrators configure the resources and checks above. Validate **both**
    definitions' ADO template expansion in that project with publication disabled.
    Check the no-release and opted-in release expansions without executing
    publication; inspect pool resolution, source-analysis jobs, signing/SBOM
    checks, current-run artifact paths and deployment-job/environment handling.
-   Confirm fork PR, same-repo PR, master, tag, manual feature and manual tag
+   Confirm fork PR, same-repo PR, master, manual opted-in master, rejected tag and manual feature
    cases. Schema/editor checks are not equivalent to this expansion.
 3. After normal PR review/merge and signing setup, run unofficial validation, then a trusted
    master integration build. Confirm a nonempty passing TRX and inspect the
@@ -238,11 +378,13 @@ leave release disabled and resolve that policy with administrators.
    The obsolete Actions workflow, Actions-only Dependabot configuration and
    README Actions badge are removed here. Add a real ADO badge only after the
    pipeline identity is known.
-5. For a separately authorized release, queue **only the trusted definition** on the full
-   protected tag ref with `publishPackage: true`. The tag must contain this
-   migration and point to a commit already on master. Inspect the computed version,
-   package and successful integration results before approving the release
-   resources. Automatic pushes, default manual runs, PRs and failed tests never
+5. For a separately authorized release, queue **only the trusted definition**
+   on protected `refs/heads/master` with `publishPackage: true`. Build packages
+   once; Integration tests that drop; Release consumes the same governed input.
+   Inspect the computed version, package/hash, successful integration results,
+   1ES provenance/signature checks and chosen external NuGet connection before
+   approving release resources. Automatic pushes, tag runs, default manual runs,
+   PRs and failed tests never
    publish. No release is requested or executed by this migration.
 
 ## Local checks and limits
@@ -250,17 +392,26 @@ leave release disabled and resolve that policy with administrators.
 With the required SDK preinstalled:
 
 ```powershell
-dotnet fsi tests/Pipeline.Tests.fsx $env:TEMP
-dotnet build --no-restore -c Release
+$env:CHECK_DIRECTORY = "$env:TEMP/asb-contracts"
+dotnet fsi build.fsx -t check
+dotnet fsi build.fsx --list
+dotnet fsi build.fsx -t graph ci integration publish
 git diff --check
 ```
 
 The contract checks exercise positive/negative authorization predicates,
 versioning, metadata, package identity, result gates, two-template selection,
 stage nesting, credential scope and current-run artifact continuity without
-Azure access. They also invoke an artifact-hosted publisher with both feed and
-key forcibly empty to ensure it fails configuration validation without Git or a
-package push.
+Azure access. They invoke artifact-hosted release preparation with no publishing
+connection, with the old raw feed/key forcibly empty and CLI tools absent from
+PATH. Missing-connection and other denial paths cannot publish. A fake connection
+name exercises successful **preflight only**, never the native publishing task.
+Tests load the **actual** build script to inspect its helpers, then
+execute the exact artifact-hosted entrypoint (not a stripped copy) for help,
+listing, graph export and denial paths. FAKE's machine-readable dependency
+export is checked for exact credential-free, integration and no-rebuild publish
+closures. Introspection is tested with release notes/configuration absent.
+Package/hash/library mismatch and `--single-target` guard regressions are included.
 Fixtures are removed from the supplied scratch directory. They do not execute Azure YAML
 or validate configured permissions. `dotnet test` is **not** an offline check:
 the existing test assembly contacts Azure during discovery. Do not run it
@@ -273,6 +424,13 @@ inspection is not ADO template expansion, pool authorization, signing readiness
 or a successful integration/release run. No Azure tests, pipeline creation or
 queueing, permissions changes, provisioning, signing or package publication
 were performed for this update.
+
+The unified script now compiles with its exact pinned build dependencies under
+10.0.403. Initial floating-reference resolution failed locally; existing
+dependencies were resolved through the configured approved Microsoft feed after
+that failure and their observed versions were pinned. Restore reported low
+severity NU1901 advisories for transitive NuGet.Packaging/NuGet.Protocol 6.12.4;
+these require normal dependency/security review, not disabling pipeline scans.
 
 Local checks against the inspected 1ES editor schema covered template names,
 pool/source-analysis objects, governed output, release input/context, SDL
@@ -320,3 +478,15 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 - [Pipeline artifact handoff](https://learn.microsoft.com/en-us/azure/devops/pipelines/artifacts/pipeline-artifacts)
 - [PublishTestResults@2 failure controls](https://learn.microsoft.com/en-us/azure/devops/pipelines/tasks/reference/publish-test-results-v2)
 - [VSTest command](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-vstest)
+
+[release-job]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Jobs/ReleaseJob.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[release-steps]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Steps/ReleaseSteps.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[release-user-steps]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Steps/UserProvidedReleaseSteps.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[artifact-input]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Core/Steps/Inputs/pipelineArtifact.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[source-build]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Core/Steps/ValidateSourceBuild.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[nuget-output]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Steps/Outputs/nuget.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[nuget-sbom]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/scripts/sbom_nuget_generation.py&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[branch-validate]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/scripts/branch_validation/validate.py&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[branch-support]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/scripts/branch_validation/shared.py&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[dotnet-push]: https://github.com/microsoft/azure-pipelines-tasks/blob/bf4b17a2d2eeb6526f064deb03117943da3946bf/Tasks/DotNetCoreCLIV2/pushcommand.ts
+[management-preview]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/templates/common-preview-build-stages.yml

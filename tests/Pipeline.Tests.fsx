@@ -1,12 +1,13 @@
 #!/usr/bin/env -S dotnet fsi
-#load "../eng/Pipeline.fsx"
+#load "../build.fsx"
 
 open System
 open System.Diagnostics
 open System.IO
 open System.IO.Compression
+open System.Text.Json
 open System.Xml.Linq
-open Pipeline
+open Build.Pipeline
 
 let mutable count = 0
 let check name condition =
@@ -21,7 +22,7 @@ let rejects name action =
 let repository = "Azure/DatatypeChannels.ASB"
 for reason in ["IndividualCI"; "BatchedCI"; "Manual"] do
     check $"{reason} master integration" (canTest repository reason "refs/heads/master")
-    check $"{reason} tag integration" (canTest repository reason "refs/tags/v3.1.1")
+    check $"{reason} tag cannot integrate" (not (canTest repository reason "refs/tags/v3.1.1"))
 
 for reason in ["PullRequest"; "Schedule"; "ResourceTrigger"; ""] do
     check $"{reason} cannot integrate" (not (canTest repository reason "refs/tags/v3.1.1"))
@@ -30,13 +31,13 @@ for branch in ["refs/heads/feature"; "refs/pull/42/merge"; "refs/tags"; "refs/ta
     check $"untrusted ref {branch}" (not (canTest repository "Manual" branch))
 
 check "fork cannot integrate" (not (canTest "someone/DatatypeChannels.ASB" "Manual" "refs/heads/master"))
-check "manual opted-in tag can release" (canRelease repository "Manual" "refs/tags/v3.1.1" "true")
+check "manual opted-in master can release" (canRelease repository "Manual" "refs/heads/master" "true")
 for reason in ["IndividualCI"; "BatchedCI"; "PullRequest"; "Schedule"] do
-    check $"{reason} cannot release" (not (canRelease repository reason "refs/tags/v3.1.1" "true"))
+    check $"{reason} cannot release" (not (canRelease repository reason "refs/heads/master" "true"))
 for requested in ["false"; ""; "$(RELEASE_REQUESTED)"] do
-    check $"opt-in {requested} fails closed" (not (canRelease repository "Manual" "refs/tags/v3.1.1" requested))
-check "master cannot release" (not (canRelease repository "Manual" "refs/heads/master" "true"))
-check "fork cannot release" (not (canRelease "fork/repo" "Manual" "refs/tags/v3.1.1" "true"))
+    check $"opt-in {requested} fails closed" (not (canRelease repository "Manual" "refs/heads/master" requested))
+check "tag cannot release" (not (canRelease repository "Manual" "refs/tags/v3.1.1" "true"))
+check "fork cannot release" (not (canRelease "fork/repo" "Manual" "refs/heads/master" "true"))
 
 check "run-number version preserved" (packageVersion "### 3.1.0\n* note" "42" "0" = "3.1.42")
 check "offset prevents cutover collisions" (packageVersion "### 3.1.0" "42" "1000" = "3.1.1042")
@@ -68,8 +69,12 @@ let fixtureRoot =
 
 let writePackage path id version =
     use archive = ZipFile.Open(path, ZipArchiveMode.Create)
-    use writer = new StreamWriter(archive.CreateEntry("DatatypeChannels.ASB.nuspec").Open())
-    writer.Write($"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>")
+    let writeEntry name content =
+        use writer = new StreamWriter(archive.CreateEntry(name).Open())
+        writer.Write(content: string)
+    writeEntry "DatatypeChannels.ASB.nuspec"
+        $"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>"
+    writeEntry "lib/net10.0/DatatypeChannels.ASB.dll" "fixture-library"
 
 let writeResults path total executed passed failed =
     File.WriteAllText(path,
@@ -79,42 +84,156 @@ Directory.CreateDirectory fixtureRoot |> ignore
 try
     stageReleaseTools fixtureRoot
     for relativePath in
-        ["eng/Pipeline.fsx"; "eng/RunPipeline.fsx"; "global.json"; "RELEASE_NOTES.md"] do
+        ["build.fsx"; "global.json"; "RELEASE_NOTES.md"] do
         let actual = File.ReadAllBytes(Path.Combine(fixtureRoot, relativePath))
-        let expected = File.ReadAllBytes(Path.Combine(Pipeline.root, relativePath))
+        let expected = File.ReadAllBytes(Path.Combine(Build.root, relativePath))
         check $"release artifact includes exact {relativePath}" (actual = expected)
     check "release artifact has no source checkout"
         (not (Directory.Exists(Path.Combine(fixtureRoot, ".git"))))
-    // A real artifact-hosted publisher must reach configuration validation
-    // without source checkout. An empty feed/key makes any package push impossible.
+    // The real artifact-hosted release target must validate without checkout or
+    // publishing. Only the governed YAML task can acquire feed credentials.
     let packages = Path.Combine(fixtureRoot, "nuget")
     Directory.CreateDirectory packages |> ignore
     let artifactVersion =
         packageVersion (File.ReadAllText(Path.Combine(fixtureRoot, "RELEASE_NOTES.md"))) "42" "0"
-    writePackage (Path.Combine(packages, $"DatatypeChannels.ASB.{artifactVersion}.nupkg"))
-        "DatatypeChannels.ASB" artifactVersion
-    let start =
-        ProcessStartInfo("dotnet", WorkingDirectory = fixtureRoot, UseShellExecute = false,
-                         RedirectStandardOutput = true, RedirectStandardError = true)
-    for argument in
-        [System.Reflection.Assembly.GetEntryAssembly().Location
-         Path.Combine(fixtureRoot, "eng/RunPipeline.fsx"); "publish"; fixtureRoot] do
-        start.ArgumentList.Add argument
-    for name, value in
+    let artifactPackage = Path.Combine(packages, $"DatatypeChannels.ASB.{artifactVersion}.nupkg")
+    writePackage artifactPackage "DatatypeChannels.ASB" artifactVersion
+    Directory.CreateDirectory(Path.Combine(fixtureRoot, "tests")) |> ignore
+    let testLibrary = Path.Combine(fixtureRoot, "tests/DatatypeChannels.ASB.dll")
+    File.WriteAllText(testLibrary, "fixture-library")
+    let originalHash = packageHash artifactPackage
+    File.WriteAllText(Path.Combine(fixtureRoot, "package.sha256"), originalHash)
+    let releaseEnvironment =
         ["BUILD_REPOSITORY_NAME", repository; "BUILD_REASON", "Manual"
-         "BUILD_SOURCEBRANCH", "refs/tags/v3.1.42"; "RELEASE_REQUESTED", "true"
+         "BUILD_SOURCEBRANCH", "refs/heads/master"; "RELEASE_REQUESTED", "true"
          "BUILD_BUILDID", "42"; "PACKAGE_PATCH_OFFSET", "0"
-         "NUGET_REPO_URL", ""; "NUGET_REPO_KEY", ""] do
-        start.Environment[name] <- value
-    use child = Process.Start start
-    let output = child.StandardOutput.ReadToEndAsync()
-    let errors = child.StandardError.ReadToEndAsync()
-    child.WaitForExit()
-    let messages = output.Result + errors.Result
-    if not (messages.Contains("Configure NUGET_REPO_URL")) then
-        printfn "Artifact publisher diagnostic: %s" messages
-    check "artifact publisher rejects missing feed without requiring git"
-        (child.ExitCode <> 0 && messages.Contains("Configure NUGET_REPO_URL"))
+         "ARTIFACT_DIRECTORY", fixtureRoot; "INTEGRATION_SUCCEEDED", "true"]
+    let invoke arguments environment =
+        let start =
+            ProcessStartInfo(Environment.ProcessPath, WorkingDirectory = fixtureRoot, UseShellExecute = false,
+                             RedirectStandardOutput = true, RedirectStandardError = true)
+        for argument in
+            [System.Reflection.Assembly.GetEntryAssembly().Location
+             Path.Combine(fixtureRoot, "build.fsx")] @ arguments do
+            start.ArgumentList.Add argument
+        // Never inherit usable publication or Azure configuration from the caller.
+        for name in
+            ["BUILD_REPOSITORY_NAME"; "BUILD_REASON"; "BUILD_SOURCEBRANCH"; "BUILD_BUILDID"
+             "PACKAGE_PATCH_OFFSET"; "RELEASE_REQUESTED"; "INTEGRATION_SUCCEEDED"
+             "ARTIFACT_DIRECTORY"; "CHECK_DIRECTORY"; "NUGET_RESTORE_SOURCE"
+             "NUGET_PUBLISH_SERVICE_CONNECTION"
+             "SERVICE_BUS_NAMESPACE"; "AZURE_CLIENT_ID"; "AZURE_TENANT_ID"
+             "AZURE_CLIENT_SECRET"; "AZURE_FEDERATED_TOKEN_FILE"] do
+            start.Environment.Remove name |> ignore
+        start.Environment["AZURE_CONFIG_DIR"] <- Path.Combine(fixtureRoot, "no-azure-session")
+        // FSI uses the absolute installed host. No build, Git or Azure CLI is on PATH.
+        start.Environment["PATH"] <- Path.Combine(fixtureRoot, "no-tools")
+        for name, value in environment do start.Environment[name] <- value
+        start.Environment["NUGET_REPO_URL"] <- ""
+        start.Environment["NUGET_REPO_KEY"] <- ""
+        use child = Process.Start start
+        let output = child.StandardOutput.ReadToEndAsync()
+        let errors = child.StandardError.ReadToEndAsync()
+        if not (child.WaitForExit(120000)) then
+            child.Kill(true)
+            failwith "Build probe timed out."
+        child.ExitCode, output.Result + errors.Result
+
+    let expect name expectedExit message arguments environment =
+        let code, output = invoke arguments environment
+        if (code = 0) <> expectedExit || not (output.Contains(message: string)) then
+            printfn "Build probe diagnostic: %s" output
+        check name ((code = 0) = expectedExit && output.Contains message)
+        output
+
+    // No release notes or solution exist during introspection; no eager version/config reads.
+    let notes = Path.Combine(fixtureRoot, "RELEASE_NOTES.md")
+    let notesText = File.ReadAllText notes
+    File.Delete notes
+    expect "actual help without config or release notes" true "Target Module options" ["--help"] [] |> ignore
+    let listing = expect "actual list advertises unified targets" true "integration" ["--list"] []
+    check "list includes artifact publisher" (listing.Contains("publish") && listing.Contains("ci-package"))
+    let graph =
+        expect "actual graph without config or release notes" true "DependencyGraph for Target publish"
+            ["-t"; "graph"; "publish"; "ci"; "integration"; "test"] []
+    check "graph did not run build or cloud targets"
+        (not (graph.Contains("Starting target 'ci-build'") || graph.Contains("Starting target 'integration'")))
+    let info = Path.Combine(fixtureRoot, "targets.json")
+    expect "FAKE machine-readable graph export" true "" ["--write-info"; info] [] |> ignore
+    use document = JsonDocument.Parse(File.ReadAllText info)
+    let targets =
+        document.RootElement.GetProperty("targets").EnumerateArray()
+        |> Seq.map (fun target -> target.GetProperty("name").GetString(), target)
+        |> Map.ofSeq
+    let dependencies name =
+        targets[name].GetProperty("hardDependencies").EnumerateArray()
+        |> Seq.map (fun target -> target.GetProperty("name").GetString())
+        |> Set.ofSeq
+    let rec closure name =
+        dependencies name
+        |> Set.fold (fun found dependency -> Set.union found (closure dependency)) (Set.singleton name)
+    for KeyValue(name, target) in targets do
+        check $"description for {name}"
+            (not (String.IsNullOrWhiteSpace(target.GetProperty("description").GetString())))
+    check "publish exact no-rebuild closure"
+        (closure "publish" = set ["publish"; "publish-artifact"; "publish-check"])
+    check "release exact no-rebuild closure"
+        (closure "release" = set ["release"; "publish"; "publish-artifact"; "publish-check"])
+    check "CI exact credential-free closure"
+        (closure "ci" =
+            set ["ci"; "ci-stage"; "ci-package"; "ci-build"; "ci-restore"; "ci-meta"; "check"; "ci-preflight"])
+    check "integration exact tested-artifact closure"
+        (closure "integration" = set ["integration"; "integration-artifact"; "check-trust"])
+    check "pack has an explicit compiled-build dependency" (dependencies "ci-package" = set ["ci-build"])
+    check "local test graph preserved" (closure "test" = set ["test"; "build"; "meta"; "restore"; "clean"])
+    check "local package graph preserved" (closure "package" = set ["package"; "build"; "meta"; "restore"; "clean"])
+    check "offline checks independent of build/auth" (closure "check" = set ["check"])
+    File.WriteAllText(notes, notesText)
+
+    expect "CI missing configuration fails before writing output" false
+        "Configure ARTIFACT_DIRECTORY" ["-t"; "ci-preflight"] [] |> ignore
+    let missingTool = Path.Combine(fixtureRoot, "missing-tool.exe")
+    let missingToolMessage =
+        try run fixtureRoot missingTool []; ""
+        with error -> error.Message
+    check "missing preinstalled tool has explicit diagnostic"
+        (missingToolMessage.Contains("Required preinstalled tool") && missingToolMessage.Contains("is unavailable"))
+    check "preflight did not write build metadata"
+        (not (File.Exists(Path.Combine(fixtureRoot, "Directory.Build.props"))))
+    let messages =
+        expect "release target reaches missing-connection rejection" false "Configure NUGET_PUBLISH_SERVICE_CONNECTION"
+            ["-t"; "publish"] releaseEnvironment
+    check "release target rejects missing connection without requiring git"
+        (messages.Contains("Configure NUGET_PUBLISH_SERVICE_CONNECTION") && not (messages.Contains("git failed")))
+    expect "release target prepares but does not push" true "This target does not publish packages."
+        ["-t"; "publish"]
+        (releaseEnvironment @ [("NUGET_PUBLISH_SERVICE_CONNECTION", "nonexistent-test-connection")]) |> ignore
+    check "publication preflight preserves exact tested package hash" (packageHash artifactPackage = originalHash)
+    expect "release requires successful integration" false "successful integration"
+        ["-t"; "publish"] (releaseEnvironment @ [("INTEGRATION_SUCCEEDED", "false")]) |> ignore
+    expect "release execution requires explicit opt-in" false "manual master run"
+        ["-t"; "publish"] (releaseEnvironment @ [("RELEASE_REQUESTED", "false")]) |> ignore
+    expect "fork execution cannot release" false "manual master run"
+        ["-t"; "publish"] (releaseEnvironment @ [("BUILD_REPOSITORY_NAME", "fork/repo")]) |> ignore
+    for reason in ["PullRequest"; "IndividualCI"] do
+        expect $"{reason} execution cannot publish" false "manual master run"
+            ["-t"; "publish"] (releaseEnvironment @ [("BUILD_REASON", reason)]) |> ignore
+    for branch in ["refs/heads/feature"; "refs/tags/v3.1.42"] do
+        expect $"{branch} execution cannot publish" false "manual master run" ["-t"; "publish"]
+            (releaseEnvironment @ [("BUILD_SOURCEBRANCH", branch)]) |> ignore
+    expect "single-target cannot bypass release guard" false "manual master run" ["-s"; "-t"; "publish"]
+        (releaseEnvironment @ [("BUILD_REASON", "PullRequest")]) |> ignore
+    expect "untrusted integration denied before tools" false "trusted master run"
+        ["-t"; "integration"] (releaseEnvironment @ [("BUILD_REASON", "PullRequest")]) |> ignore
+    expect "single-target cannot bypass integration guard" false "trusted master run"
+        ["-s"; "-t"; "integration"] (releaseEnvironment @ [("BUILD_REASON", "PullRequest")]) |> ignore
+    File.WriteAllText(testLibrary, "different-library")
+    expect "different tested library rejected" false "differs from the integration test library"
+        ["-t"; "publish"] releaseEnvironment |> ignore
+    File.WriteAllText(testLibrary, "fixture-library")
+    File.AppendAllText(artifactPackage, "changed bytes")
+    expect "tampered package rejected before feed lookup" false "Package hash differs"
+        ["-t"; "publish"] releaseEnvironment |> ignore
     let package = Path.Combine(fixtureRoot, "DatatypeChannels.ASB.3.1.42.nupkg")
     rejects "missing package" (fun () -> packageFile fixtureRoot "3.1.42" |> ignore)
     writePackage package "DatatypeChannels.ASB" "3.1.42"
@@ -197,13 +316,15 @@ check "PR has no CI trigger" (prYaml.Contains("\ntrigger: none\n"))
 check "PR targets master and skips drafts"
     (prYaml.Contains("\npr:\n  autoCancel: true\n  drafts: false\n  branches:\n    include:\n    - master"))
 check "trusted definition disables PRs" (yaml.Contains("\npr: none\n"))
-check "trusted triggers retain master and tags"
-    (yaml.Contains("    - master\n  tags:\n    include:\n    - '*'"))
+check "trusted triggers master only, never tags"
+    (yaml.Contains("trigger:\n  branches:\n    include:\n    - master")
+     && not (yaml.Contains("startsWith(variables['Build.SourceBranch'], 'refs/tags/')")
+             || yaml.Contains("\n  tags:")))
 check "trusted build excludes untrusted invocation"
     (yaml.Contains("condition: >-\n          and(succeeded(),")
      && yaml.Contains("in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual')"))
 for forbidden in
-    ["AzureCLI@"; "azureSubscription:"; "NUGET_REPO_KEY"; "- group:"; "environment:";
+    ["AzureCLI@"; "azureSubscription:"; "NUGET_REPO_KEY"; "publishFeedCredentials:"; "- group:"; "environment:";
      "publishPackage"; "TRUSTED_"; "stage: Integration"; "stage: Release"] do
     check $"PR/shared build cannot reference {forbidden}"
         (not (prYaml.Contains forbidden || buildYaml.Contains forbidden))
@@ -241,18 +362,43 @@ check "release has no checkout or replacement download"
      && not (release.Contains("download:")))
 check "release uses artifact tools and SDK pin"
     (release.Contains("workingDirectory: $(Pipeline.Workspace)/drop")
-     && release.Contains("dotnet fsi eng/RunPipeline.fsx publish \"$(Pipeline.Workspace)/drop\""))
+     && release.Contains("dotnet fsi build.fsx -t publish")
+     && release.Contains("ARTIFACT_DIRECTORY: $(Pipeline.Workspace)/drop"))
 check "release cannot rebuild or restore"
     (not (release.Contains(" build ") || release.Contains(" pack ") || release.Contains(" restore ")))
-check "release key is scoped to release"
-    (release.Contains("NUGET_REPO_KEY: $(NUGET_REPO_KEY)")
-     && not (integration.Contains("NUGET_REPO_KEY")))
+check "release credentials belong only to the governed task"
+    (release.Contains("task: 1ES.PublishNuGet@1")
+     && release.Contains("publishFeedCredentials: $(NUGET_PUBLISH_SERVICE_CONNECTION)")
+     && not (combinedYaml.Contains("NUGET_REPO_KEY") || integration.Contains("publishFeedCredentials:")))
+check "governed publisher uses only the validated package folder"
+    (release.Contains("packagesToPush: '$(Pipeline.Workspace)/drop/nuget/*.nupkg'")
+     && release.Contains("packageParentPath: $(Pipeline.Workspace)/drop/nuget")
+     && release.IndexOf("build.fsx -t publish", StringComparison.Ordinal)
+        < release.IndexOf("task: 1ES.PublishNuGet@1", StringComparison.Ordinal))
+check "governed publisher uses installed dotnet and external NuGet connection"
+    (release.Contains("useDotNetTask: true") && release.Contains("nuGetFeedType: external")
+     && not (release.Contains("allowPackageConflicts: true") || release.Contains("NuGetToolInstaller@")))
 check "Actions Azure workflow retired" (not (File.Exists(Path.Combine(root, ".github/workflows/azure.datatypechannels.asb.yml"))))
 check "release default is off" (yaml.Contains("default: false"))
 check "manual release condition" (yaml.Contains("eq(variables['Build.Reason'], 'Manual')"))
+check "release requires protected master" (release.Contains("eq(variables['Build.SourceBranch'], 'refs/heads/master')"))
+check "production branch validation is requested" (yaml.Contains("branchValidation: enforceInReleaseJobs"))
+check "SBOM generation is explicit" (yaml.Contains("sbom:\n        enabled: true"))
 check "successful integration required" (yaml.Contains("eq(dependencies.Integration.result, 'Succeeded')"))
 check "no missing-test success" (yaml.Contains("failTaskOnMissingResultsFile: true"))
 check "release approval environment" (yaml.Contains("environment: DatatypeChannels-ASB-Release"))
 check "no SDK installer" (not (combinedYaml.Contains("UseDotNet@")))
 check "no GitHub identity" (not (combinedYaml.Contains("CLIENT_ID") || combinedYaml.Contains("id-token")))
+check "only build.fsx orchestrates the build"
+    (not (File.Exists(Path.Combine(root, "eng/RunPipeline.fsx")))
+     && not (File.Exists(Path.Combine(root, "eng/Pipeline.fsx")))
+     && not (combinedYaml.Contains("RunPipeline.fsx")))
+check "shared build invokes the CI graph"
+    (buildYaml.Contains("dotnet fsi build.fsx -t ci")
+     && not (buildYaml.Contains("dotnet fsi tests/")))
+check "integration invokes the artifact graph" (integration.Contains("dotnet fsi build.fsx -t integration"))
+check "release maps successful stage prerequisite" (release.Contains("INTEGRATION_SUCCEEDED: 'true'"))
+let buildSource = File.ReadAllText(Path.Combine(root, "build.fsx"))
+check "no raw publisher or key lookup is hidden in the script"
+    (not (buildSource.Contains("\"nuget\"; \"push\"") || buildSource.Contains("NUGET_REPO_KEY")))
 printfn "%d checks passed" count

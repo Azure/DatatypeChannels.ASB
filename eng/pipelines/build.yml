@@ -24,10 +24,10 @@ stages:
     - pwsh: |
         dotnet --version
         if ($LASTEXITCODE -ne 0) { throw 'Preinstall the SDK required by global.json. No SDK is downloaded.' }
-        dotnet fsi tests/Pipeline.Tests.fsx "$(Agent.TempDirectory)/pipeline-contracts"
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        dotnet fsi eng/RunPipeline.fsx build "$(Build.ArtifactStagingDirectory)/drop"
+        dotnet fsi build.fsx -t ci
         exit $LASTEXITCODE
-      displayName: Restore, publish build output, and pack
+      displayName: Run credential-free build, check and package target graph
       env:
+        ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
+        CHECK_DIRECTORY: $(Agent.TempDirectory)/pipeline-contracts
         NUGET_RESTORE_SOURCE: $(NUGET_RESTORE_SOURCE)
