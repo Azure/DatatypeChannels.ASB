@@ -2,6 +2,7 @@
 #load "../eng/Pipeline.fsx"
 
 open System
+open System.Diagnostics
 open System.IO
 open System.IO.Compression
 open System.Xml.Linq
@@ -76,6 +77,44 @@ let writeResults path total executed passed failed =
 
 Directory.CreateDirectory fixtureRoot |> ignore
 try
+    stageReleaseTools fixtureRoot
+    for relativePath in
+        ["eng/Pipeline.fsx"; "eng/RunPipeline.fsx"; "global.json"; "RELEASE_NOTES.md"] do
+        let actual = File.ReadAllBytes(Path.Combine(fixtureRoot, relativePath))
+        let expected = File.ReadAllBytes(Path.Combine(Pipeline.root, relativePath))
+        check $"release artifact includes exact {relativePath}" (actual = expected)
+    check "release artifact has no source checkout"
+        (not (Directory.Exists(Path.Combine(fixtureRoot, ".git"))))
+    // A real artifact-hosted publisher must reach configuration validation
+    // without source checkout. An empty feed/key makes any package push impossible.
+    let packages = Path.Combine(fixtureRoot, "nuget")
+    Directory.CreateDirectory packages |> ignore
+    let artifactVersion =
+        packageVersion (File.ReadAllText(Path.Combine(fixtureRoot, "RELEASE_NOTES.md"))) "42" "0"
+    writePackage (Path.Combine(packages, $"DatatypeChannels.ASB.{artifactVersion}.nupkg"))
+        "DatatypeChannels.ASB" artifactVersion
+    let start =
+        ProcessStartInfo("dotnet", WorkingDirectory = fixtureRoot, UseShellExecute = false,
+                         RedirectStandardOutput = true, RedirectStandardError = true)
+    for argument in
+        [System.Reflection.Assembly.GetEntryAssembly().Location
+         Path.Combine(fixtureRoot, "eng/RunPipeline.fsx"); "publish"; fixtureRoot] do
+        start.ArgumentList.Add argument
+    for name, value in
+        ["BUILD_REPOSITORY_NAME", repository; "BUILD_REASON", "Manual"
+         "BUILD_SOURCEBRANCH", "refs/tags/v3.1.42"; "RELEASE_REQUESTED", "true"
+         "BUILD_BUILDID", "42"; "PACKAGE_PATCH_OFFSET", "0"
+         "NUGET_REPO_URL", ""; "NUGET_REPO_KEY", ""] do
+        start.Environment[name] <- value
+    use child = Process.Start start
+    let output = child.StandardOutput.ReadToEndAsync()
+    let errors = child.StandardError.ReadToEndAsync()
+    child.WaitForExit()
+    let messages = output.Result + errors.Result
+    if not (messages.Contains("Configure NUGET_REPO_URL")) then
+        printfn "Artifact publisher diagnostic: %s" messages
+    check "artifact publisher rejects missing feed without requiring git"
+        (child.ExitCode <> 0 && messages.Contains("Configure NUGET_REPO_URL"))
     let package = Path.Combine(fixtureRoot, "DatatypeChannels.ASB.3.1.42.nupkg")
     rejects "missing package" (fun () -> packageFile fixtureRoot "3.1.42" |> ignore)
     writePackage package "DatatypeChannels.ASB" "3.1.42"
@@ -108,14 +147,112 @@ finally
     Directory.Delete(fixtureRoot, true)
 
 let root = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
-let yaml = File.ReadAllText(Path.Combine(root, "azure-pipelines.yml"))
+let yaml = File.ReadAllText(Path.Combine(root, "azure-pipelines.yml")).Replace("\r\n", "\n")
+let readOptional name =
+    let path = Path.Combine(root, name)
+    if File.Exists path then (File.ReadAllText path).Replace("\r\n", "\n") else ""
+
+let prYaml = readOptional "azure-pipelines-pr.yml"
+let buildYaml = readOptional "eng/pipelines/build.yml"
+let combinedYaml = String.concat "\n" [yaml; prYaml; buildYaml]
+
+// These are repository contracts, not a YAML parser or 1ES expansion engine.
+let section (start: string) (finish: string) (text: string) =
+    let first = text.IndexOf(start, StringComparison.Ordinal)
+    if first < 0 then ""
+    else
+        let last = text.IndexOf(finish, first + start.Length, StringComparison.Ordinal)
+        if last < 0 then text.Substring first else text.Substring(first, last - first)
+
+let release = section "      - stage: Release" "\n    - stage:" yaml
+let integration = section "    - stage: Integration" "\n    - ${{" yaml
+
+check "official trusted template"
+    (yaml.Contains("template: v1/1ES.Official.PipelineTemplate.yml@1esPipelines"))
+check "unofficial PR template"
+    (prYaml.Contains("template: v1/1ES.Unofficial.PipelineTemplate.yml@1esPipelines"))
+for name, text in ["trusted", yaml; "PR", prYaml] do
+    check $"{name} approved template repository"
+        (text.Contains("repository: 1esPipelines\n    type: git")
+         && text.Contains("name: 1ESPipelineTemplates/1ESPipelineTemplates")
+         && text.Contains("ref: refs/tags/release"))
+    check $"{name} stages are nested under extends parameters"
+        (text.Contains("extends:\n  template:")
+         && text.Contains("\n  parameters:\n")
+         && text.Contains("\n    stages:\n")
+         && not (text.Contains("\nstages:")))
+    check $"{name} shares only build stage"
+        (text.Contains("- template: eng/pipelines/build.yml@self"))
+    check $"{name} explicit Windows pool and source analysis"
+        (text.Contains("\n    pool:\n      name: $(")
+         && text.Contains("\n      image: $(")
+         && text.Contains("\n      os: windows")
+         && text.Contains("sourceAnalysisPool:\n        name: $(")
+         && text.Contains("\n        image: $(")
+         && text.Contains("\n        os: windows"))
+    check $"{name} no copied Management resources"
+        (not (text.Contains("avs-management-") || text.Contains("Scripting Metadata")))
+
+check "PR has no CI trigger" (prYaml.Contains("\ntrigger: none\n"))
+check "PR targets master and skips drafts"
+    (prYaml.Contains("\npr:\n  autoCancel: true\n  drafts: false\n  branches:\n    include:\n    - master"))
+check "trusted definition disables PRs" (yaml.Contains("\npr: none\n"))
+check "trusted triggers retain master and tags"
+    (yaml.Contains("    - master\n  tags:\n    include:\n    - '*'"))
+check "trusted build excludes untrusted invocation"
+    (yaml.Contains("condition: >-\n          and(succeeded(),")
+     && yaml.Contains("in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual')"))
+for forbidden in
+    ["AzureCLI@"; "azureSubscription:"; "NUGET_REPO_KEY"; "- group:"; "environment:";
+     "publishPackage"; "TRUSTED_"; "stage: Integration"; "stage: Release"] do
+    check $"PR/shared build cannot reference {forbidden}"
+        (not (prYaml.Contains forbidden || buildYaml.Contains forbidden))
+
+check "governed artifact output"
+    (buildYaml.Contains("templateContext:\n      outputs:\n      - output: pipelineArtifact")
+     && buildYaml.Contains("artifactName: drop")
+     && buildYaml.Contains("targetPath: $(Build.ArtifactStagingDirectory)/drop"))
+check "no direct artifact publisher"
+    (not (combinedYaml.Contains("- publish:") || combinedYaml.Contains("PublishPipelineArtifact@")))
+check "no SDL or signing bypass"
+    (not (combinedYaml.Contains("skipSDL:") || combinedYaml.Contains("enabled: false")
+          || combinedYaml.Contains("isProduction: false") || combinedYaml.Contains("sbomEnabled: false")))
+check "official signing validation explicitly required"
+    (yaml.Contains("codeSignValidation:\n        enabled: true\n        break: true"))
+check "integration verifies ancestry before Azure login"
+    (integration.IndexOf("check-trust", StringComparison.Ordinal) >= 0
+     && integration.IndexOf("check-trust", StringComparison.Ordinal)
+        < integration.IndexOf("task: AzureCLI@2", StringComparison.Ordinal))
+check "integration uses current drop"
+    (integration.Contains("download: current\n          artifact: drop"))
+check "Azure login does not export credentials"
+    (integration.Contains("addSpnToEnvironment: false") && integration.Contains("useGlobalConfig: false"))
+check "release compiled only with explicit opt-in"
+    (yaml.Contains("    - ${{ if eq(parameters.publishPackage, true) }}:"))
+check "release depends on both build and integration"
+    (release.Contains("dependsOn:\n        - Build\n        - Integration"))
+check "release is a production governed job"
+    (release.Contains("templateContext:\n            type: releaseJob\n            isProduction: true"))
+check "release consumes same-run governed input"
+    (release.Contains("input: pipelineArtifact\n              artifactName: drop\n              buildType: current")
+     && release.Contains("targetPath: $(Pipeline.Workspace)/drop"))
+check "release has no checkout or replacement download"
+    (release.Contains("checkout: none") && not (release.Contains("checkout: self"))
+     && not (release.Contains("download:")))
+check "release uses artifact tools and SDK pin"
+    (release.Contains("workingDirectory: $(Pipeline.Workspace)/drop")
+     && release.Contains("dotnet fsi eng/RunPipeline.fsx publish \"$(Pipeline.Workspace)/drop\""))
+check "release cannot rebuild or restore"
+    (not (release.Contains(" build ") || release.Contains(" pack ") || release.Contains(" restore ")))
+check "release key is scoped to release"
+    (release.Contains("NUGET_REPO_KEY: $(NUGET_REPO_KEY)")
+     && not (integration.Contains("NUGET_REPO_KEY")))
 check "Actions Azure workflow retired" (not (File.Exists(Path.Combine(root, ".github/workflows/azure.datatypechannels.asb.yml"))))
 check "release default is off" (yaml.Contains("default: false"))
 check "manual release condition" (yaml.Contains("eq(variables['Build.Reason'], 'Manual')"))
 check "successful integration required" (yaml.Contains("eq(dependencies.Integration.result, 'Succeeded')"))
 check "no missing-test success" (yaml.Contains("failTaskOnMissingResultsFile: true"))
-check "release consumes current artifact" (yaml.Contains("download: current"))
 check "release approval environment" (yaml.Contains("environment: DatatypeChannels-ASB-Release"))
-check "no SDK installer" (not (yaml.Contains("UseDotNet@")))
-check "no GitHub identity" (not (yaml.Contains("CLIENT_ID") || yaml.Contains("id-token")))
+check "no SDK installer" (not (combinedYaml.Contains("UseDotNet@")))
+check "no GitHub identity" (not (combinedYaml.Contains("CLIENT_ID") || combinedYaml.Contains("id-token")))
 printfn "%d checks passed" count

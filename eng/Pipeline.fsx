@@ -108,6 +108,15 @@ let packageFile (directory: string) version =
         failwith "Package identity does not match this run."
     expected
 
+let stageReleaseTools artifact =
+    // Governed release jobs cannot check out source. Carry only the tools and
+    // version/SDK inputs needed to publish this run's immutable package.
+    for relativePath in
+        ["eng/Pipeline.fsx"; "eng/RunPipeline.fsx"; "global.json"; "RELEASE_NOTES.md"] do
+        let destination = Path.Combine(artifact, relativePath)
+        Directory.CreateDirectory(Path.GetDirectoryName destination) |> ignore
+        File.Copy(Path.Combine(root, relativePath), destination, true)
+
 let build artifact =
     let source = required "NUGET_RESTORE_SOURCE" |> httpsUrl "NUGET_RESTORE_SOURCE"
     writeMetadata ()
@@ -117,6 +126,7 @@ let build artifact =
     dotnet root ["pack"; library; "-c"; "Release"; "--no-build"; "--no-restore"; "--output"; packages]
     packageFile packages (currentVersion ()) |> ignore
     copyDirectory (Path.Combine(root, "tests/DatatypeChannels.ASB.Tests/bin/Release/net10.0")) (Path.Combine(artifact, "tests"))
+    stageReleaseTools artifact
 
 let assertTrusted () =
     if not (canTest (required "BUILD_REPOSITORY_NAME") (required "BUILD_REASON") (required "BUILD_SOURCEBRANCH")) then
@@ -152,7 +162,9 @@ let publish artifact =
     if not (canRelease (required "BUILD_REPOSITORY_NAME") (required "BUILD_REASON")
                 (required "BUILD_SOURCEBRANCH") (required "RELEASE_REQUESTED")) then
         failwith "Publishing requires explicit opt-in on a manual tag run."
-    assertTrusted ()
+    // Integration must have succeeded for this run, including its pre-login
+    // ancestry check. 1ES validates the current-run input in the release job,
+    // which has no checkout and must not fetch or rebuild source.
     let package = packageFile (Path.Combine(artifact, "nuget")) (currentVersion ())
     let source = required "NUGET_REPO_URL" |> httpsUrl "NUGET_REPO_URL"
     let key = required "NUGET_REPO_KEY"

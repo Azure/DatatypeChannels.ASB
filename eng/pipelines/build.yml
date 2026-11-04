@@ -1,0 +1,33 @@
+# Shared build logic only; entrypoints own trust and pool configuration.
+parameters:
+- name: condition
+  type: string
+  default: succeeded()
+
+stages:
+- stage: Build
+  displayName: Build and package without application credentials
+  condition: ${{ parameters.condition }}
+  jobs:
+  - job: Build
+    workspace:
+      clean: all
+    templateContext:
+      outputs:
+      - output: pipelineArtifact
+        targetPath: $(Build.ArtifactStagingDirectory)/drop
+        artifactName: drop
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: false
+    - pwsh: |
+        dotnet --version
+        if ($LASTEXITCODE -ne 0) { throw 'Preinstall the SDK required by global.json. No SDK is downloaded.' }
+        dotnet fsi tests/Pipeline.Tests.fsx "$(Agent.TempDirectory)/pipeline-contracts"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        dotnet fsi eng/RunPipeline.fsx build "$(Build.ArtifactStagingDirectory)/drop"
+        exit $LASTEXITCODE
+      displayName: Restore, publish build output, and pack
+      env:
+        NUGET_RESTORE_SOURCE: $(NUGET_RESTORE_SOURCE)

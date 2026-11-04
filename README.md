@@ -44,8 +44,11 @@ Where
 dotnet fsi build.fsx
 ```
 
-CI uses preinstalled SDK tools, an existing namespace, and Azure Pipelines
-authentication. It does not run the local `init` target. The legacy `initCI`,
+CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
+validation (`azure-pipelines-pr.yml`) and official trusted integration/package
+production (`azure-pipelines.yml`). They use preinstalled SDK tools, an existing
+namespace, and Azure Pipelines authentication; signing and resource authorization
+require administrator setup. Neither runs the local `init` target. The legacy `initCI`,
 `ci`, `publish`, and `release` targets are retired. See the
 [pipeline setup and cutover guide](docs/azure-pipelines.md) for administrator
 prerequisites and release authorization.

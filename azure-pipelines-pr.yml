@@ -1,0 +1,35 @@
+# Untrusted definition: no Azure connection, release group, environment or signer.
+# Authorize only isolated PR pools, including the source-analysis pool.
+trigger: none
+
+pr:
+  autoCancel: true
+  drafts: false
+  branches:
+    include:
+    - master
+
+variables:
+  PACKAGE_PATCH_OFFSET: '0'
+
+resources:
+  repositories:
+  - repository: 1esPipelines
+    type: git
+    name: 1ESPipelineTemplates/1ESPipelineTemplates
+    ref: refs/tags/release
+
+extends:
+  template: v1/1ES.Unofficial.PipelineTemplate.yml@1esPipelines
+  parameters:
+    pool:
+      name: $(PR_POOL_NAME)
+      image: $(PR_POOL_IMAGE)
+      os: windows
+    sdl:
+      sourceAnalysisPool:
+        name: $(PR_SOURCE_ANALYSIS_POOL_NAME)
+        image: $(PR_SOURCE_ANALYSIS_POOL_IMAGE)
+        os: windows
+    stages:
+    - template: eng/pipelines/build.yml@self
