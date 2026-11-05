@@ -38,7 +38,7 @@ cache/feed prerequisite still applies):
 ```
 dotnet fsi build.fsx -- --help
 dotnet fsi build.fsx --list
-dotnet fsi build.fsx -t graph ci integration publish test
+dotnet fsi build.fsx -t graph ci official-compile official-pack official-stage integration publish test
 ```
 
 The test suite is an integration suite. It creates Service Bus messaging entities
@@ -63,16 +63,21 @@ CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
 validation (`.pipelines/azure-pipelines-pr.yml`) and official trusted
 integration/package production (`.pipelines/azure-pipelines.yml`). They use
 preinstalled SDK tools, an existing namespace, and Azure Pipelines
-authentication. The signing scope/ESRP policy and resource authorization remain
-unresolved; this draft is not ready to enable production. The setup guide names
-the exact binary/package signing decisions and required build boundaries.
+authentication. Trusted Build now wires native `EsrpCodeSigning@6` DLL and NuGet
+signing between deliberate FAKE target boundaries. ESRP identity, vault,
+certificates, authorized key codes, resource approvals and live 1ES validation
+remain external prerequisites; this is not evidence of production readiness.
 Trusted Build and Integration authenticate dependency resolution with
 `NuGetAuthenticate@1` before FSI. PR/fork jobs do not receive that task or
 connection; their approved dependency closure must be anonymously readable.
-Both invoke `build.fsx -t ci` through the shared YAML stage; trusted jobs use
-`check-trust`, `integration`, and `publish`.
+The shared stage defaults to unsigned `build.fsx -t ci` for PRs, without signing
+configuration or access. Official builds select `official-compile` → native DLL
+sign/verify → `official-pack` (no rebuild) → native NuGet sign/verify →
+`official-stage` (final signature checks/hash/staging). Only the two first-party
+DLLs are signed; third-party dependencies are not re-signed. Trusted jobs then use
+`check-trust`, `integration`, and `publish` on the same final signed artifact.
 Release is an explicitly opted-in manual master run, not a Git tag trigger.
-The `publish` target validates the tested artifact without building or packing;
+The `publish` target validates signatures and the tested artifact without building or packing;
 the native `1ES.PublishNuGet@1` task performs the actual push through an approved
 NuGet service connection after release approvals.
 Neither definition runs local `init`; `initCI` remains retired and fails closed.

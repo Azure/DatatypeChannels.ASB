@@ -48,15 +48,21 @@ There is no pipeline-completion release trigger.
 
 `build.fsx` is the single entrypoint for local and pipeline orchestration.
 It uses the existing FAKE target engine, not a wrapper or a separate dispatcher.
-The two YAML entrypoints remain separate trust boundaries, but both invoke
-`dotnet fsi build.fsx -t ci` through the shared stage. This graph checks the
-pipeline contracts, generates metadata, restores existing solution dependencies,
-publishes Release build output, and packs only the already built library. It retains
+The two YAML entrypoints remain separate trust boundaries. The shared stage
+defaults to unsigned `dotnet fsi build.fsx -t ci` for PRs. Official builds alone
+set the compile-time `signArtifacts: true` parameter, selecting
+`official-compile` → native DLL sign/verify → `official-pack` →
+native NuGet sign/verify → `official-stage`. There is no unsigned fallback.
+Both paths check the pipeline contracts, generate metadata, restore existing
+solution dependencies and compile Release output. Official packing verifies and
+copies the signed first-party DLLs before packing with `--no-build --no-restore`.
+Resume targets have no hard dependency on earlier build/pack targets.
+The final staging step retains
 both `nuget/` and compiled `tests/` in the same run's `drop` pipeline artifact.
 The build declares `templateContext.outputs` with `output: pipelineArtifact`
 instead of publishing directly, so 1ES controls output scanning and metadata.
-The official signing-validation gate can block this output until signing is
-established (see below). The integration stage tests those binaries with VSTest
+The official signing-validation gate can still block output until ESRP onboarding
+and scanner policy are established (see below). The integration stage tests those binaries with VSTest
 and uploads TRX results.
 Missing results, zero tests, failed tests, or skipped tests fail integration.
 PR packages are **untested candidates**, not releasable outputs.
@@ -67,7 +73,8 @@ the download and source-build/SBOM/signature checks; no validation bypass is
 configured. The release stage consumes the same run's artifact. `build.fsx -t publish`
 validates the package
 filename and nuspec ID/version, the package SHA256 recorded at build time, and
-equality of the packaged library and integration-test library. Then the supported
+equality of the packaged library and integration-test library, plus actual NuGet
+and first-party Authenticode signatures. Then the supported
 **`1ES.PublishNuGet@1` task**, not a raw push hidden inside an F# script, publishes
 that package using an approved external NuGet service connection and preinstalled
 dotnet. No duplicate-skip option hides publication errors. Repeating a
@@ -162,7 +169,7 @@ printer; it has no build dependencies.
 ```powershell
 dotnet fsi build.fsx -- --help
 dotnet fsi build.fsx --list
-dotnet fsi build.fsx -t graph ci integration publish test
+dotnet fsi build.fsx -t graph ci official-compile official-pack official-stage integration publish test
 dotnet fsi build.fsx --write-info "$env:TEMP/asb-targets.json"
 ```
 
@@ -170,6 +177,10 @@ dotnet fsi build.fsx --write-info "$env:TEMP/asb-targets.json"
 |---|---|
 | `check` | Offline contract checks only; requires external scratch `CHECK_DIRECTORY` |
 | `ci` | `ci-preflight` and `check` → `ci-meta` → `ci-restore` → `ci-build` → `ci-package` → `ci-stage` → `ci` |
+| `signing-preflight` | Trusted repository/master/reason plus required ESRP configuration; no signing or resource lookup |
+| `official-compile` | `signing-preflight`, then the `ci-build` closure (including checks); isolate only product/test DLLs in `drop.signing/`; **no pack/stage** |
+| `official-pack` | Standalone resume after native DLL signing: validate both signatures/run versions, copy exact bytes into build/test outputs, pack with `--no-build --no-restore`; **no compile dependencies** |
+| `official-stage` | Standalone resume after native NuGet signing: verify actual signatures and byte equality, stage test runtime closure and write final hash; **no build/pack dependencies** |
 | `check-trust` | Trusted repository/master/reason and Git ancestry; executed before AzureCLI login |
 | `integration` | `check-trust` → `integration-artifact` → `integration`; no build/pack |
 | `publish` | `publish-check` → `publish-artifact` → `publish`; checks readiness for the native NuGet task; **no checkout, Git, clean, restore, build, pack, live tests or push** |
@@ -184,6 +195,13 @@ definition variables, built-in variables and step environment mappings.
 Integration and publication select the same run's drop with `ARTIFACT_DIRECTORY`.
 Privileged target bodies repeat their authorization guards because FAKE permits
 `--single-target`; skipping dependency execution must not bypass those guards.
+Soft ordering puts `signing-preflight` before `ci-preflight` and `check` only when
+the official compilation graph is selected. It never adds signing configuration
+to the PR graph. Neither resume target uses `--single-target` to avoid rebuilding:
+their real dependency closures are standalone. Packing refuses an existing
+NuGet output directory; finalization refuses an already sealed artifact.
+Use a fresh build after a failed/partial signing attempt, not a local unsigned
+`ci-stage` invocation. Help/list/graph/export never evaluate signing configuration.
 As before, local documentation needs the existing `fsdocs` tool manifest restored
 using `dotnet tool restore --configfile NuGet.config` after feed access is
 established. No tool restore or installer was added to pipeline targets.
@@ -197,6 +215,10 @@ license, project/repository URLs and package tags. Git tags are not consulted.
 A manually opted-in master run creates a new version once during Build;
 Integration and Release use that exact version and artifact, not a new counter
 or package at release time.
+CI compilation also passes this version as an MSBuild property to the solution:
+`tests/Directory.Build.props` deliberately shadows the root metadata file.
+Both first-party DLLs therefore carry the run version for signing-input and
+artifact verification; test-project package settings are unchanged.
 
 Before cutover, inspect the destination feed and choose a nonnegative offset
 in the trusted `.pipelines/azure-pipelines.yml` if needed to ensure the next patch
@@ -238,7 +260,8 @@ Do not allow queue-time overrides of version or security variables.
    authorization and resolution must pass ADO validation before any run.
    The trusted pool serves build, integration and release; source-analysis
    pools must meet the same trust boundary as their owning definition.
-   Agents need preinstalled Git, PowerShell 7,
+   Agents need preinstalled Git, PowerShell 7 (including Windows
+   `Get-AuthenticodeSignature`),
    the SDK selected by `global.json` (**10.0.403/latestPatch**), and the .NET 10
    runtime; trusted agents also need Azure CLI. `latestPatch` does not accept a
    later feature band. Missing tools fail rather than downloading
@@ -427,42 +450,59 @@ Do not allow queue-time overrides of version or security variables.
    not that ADO can build without its own restricted job token.
    All PRs, including same-repository PRs, stay unofficial; trusted tests run
    only on master. Do not switch to `pull_request_target`.
-9. **Signing — exact missing policy and repository integration.** The WI requires
-   FIC removal/ADO migration; it has no signing requirement or acceptance policy.
-   The [1ES code-sign guidance][code-sign-guidance] requires signed shipped
-   binaries/scripts, while the [NuGet output implementation][nuget-output] does
-   not choose this library's signer or require a particular NuGet author signature.
-   The trusted YAML retains breaking code-sign validation. Validation is not a
-   signer: local `Get-AuthenticodeSignature` reports **NotSigned** for both
-   first-party DLLs, and `dotnet nuget verify --all` reports **NU3004** for the
-   locally built unsigned nupkg.
+9. **Signing — implementation approved; external onboarding still required.**
+   Trusted Build now uses two native **`EsrpCodeSigning@6` with WIF** tasks.
+   The [current 1ES example][code-sign-sample] supplies the DLL
+   `SigntoolSign` → `SigntoolVerify` operation contract: SHA256 file digest,
+   `/NPH`, Microsoft Opus metadata and the Microsoft RFC3161 timestamp service.
+   The [v6 NuGet example][nuget-signing-sample] supplies
+   `NuGetSign` → `NuGetVerify`. Both use `signConfigType: inlineSignParams`
+   and `https://api.esrp.microsoft.com/api/v2`.
+   [1ES.Signing.yml][deprecated-signing] deprecates its old task; it is not used.
+   No sample connection, app identity, vault or certificate binding was copied.
 
-   **Owner decision required:** supply the approved code-sign validation policy
-   and ESRP signing operation/profile for this OSS library, including the treatment
-   of first-party test binaries and copied third-party DLLs, and state whether
-   the **nupkg itself needs an author/repository signature in addition to binary
-   Authenticode signatures**. These are different signing contracts, not merely
-   missing resource names:
+   Set these **required, protected official-definition variables**, with
+   queue-time overrides disabled. Do not define or authorize them for PR jobs:
 
-   | Surface | Required integration boundary / missing policy |
+   | Variable | v6 input / purpose |
    |---|---|
-   | `DatatypeChannels.ASB.dll` in the package and `tests/` | Approved binary-signing operation/key/certificate policy; sign after `ci-build`, before `ci-package`, and copy the same signed DLL to the test output. |
-   | `DatatypeChannels.ASB.Tests.dll` and dependency DLLs in the governed test drop | Approved validation scope/third-party treatment (`policyFile`/targets if needed); do not blindly re-sign dependencies or invent exclusions. |
-   | `DatatypeChannels.ASB.<version>.nupkg` | Explicit decision whether package signing is required and its approved operation/profile; if required, sign after packing and before `ci-stage` seals its hash. |
-   | SBOM/source-build provenance | Platform onboarding and signed-SBOM validation for the production input; independent of DLL/package signatures. |
+   | `ESRP_CONNECTED_SERVICE_NAME` | `ConnectedServiceName`: designated approved WIF signing connection |
+   | `ESRP_APP_REGISTRATION_CLIENT_ID` | `AppRegistrationClientId`: signing app's nonempty GUID |
+   | `ESRP_APP_REGISTRATION_TENANT_ID` | `AppRegistrationTenantId`: signing tenant's nonempty GUID |
+   | `ESRP_AUTH_AKV_NAME` | `AuthAKVName`: approved signing vault |
+   | `ESRP_AUTH_CERT_NAME` | `AuthCertName`: authentication certificate name |
+   | `ESRP_AUTH_SIGN_CERT_NAME` | `AuthSignCertName`: request-signing certificate name |
+   | `ESRP_DLL_KEY_CODE` | Authorized binary signing policy code |
+   | `ESRP_NUGET_KEY_CODE` | Authorized NuGet signing policy code |
 
-   The supported current [1ES example][code-sign-sample] uses
-   **`EsrpCodeSigning@6` with WIF**, not a raw signer or installer.
-   [1ES.Signing.yml][deprecated-signing] explicitly deprecates its old task in
-   favor of v6. The v6 contract includes `ConnectedServiceName`,
-   `AppRegistrationClientId`, `AppRegistrationTenantId`, `AuthAKVName`,
-   `AuthCertName`, `AuthSignCertName`, `ServiceEndpointUrl`, `FolderPath`,
-   `Pattern` and `inlineOperation` with `signConfigType: inlineSignParams`.
-   The example's identities, key codes, certificate names and operations are not
-   this repository's authorization; none were copied. A connection alone cannot
-   select the missing policy. Once approved, repository work must expose those
-   native signing boundaries through the existing FAKE targets; the current
-   single `ci` invocation does **not** implement them.
+   Missing/empty/unexpanded macros fail preflight. Key codes must match
+   `CP-` plus exactly six ASCII digits before JSON interpolation.
+   **CP-230012** (DLL sample) and **CP-401405** (NuGet sample) are policy
+   references, not defaults or evidence this repository is authorized for them.
+   Administrators must obtain the appropriate ESRP authorization and confirm the
+   operations match that policy. Do not repurpose an unrelated Azure connection.
+   Scoped public connection inspection found no designated signer; this is not
+   proof that none exists elsewhere. No resource/permission changes or signing
+   execution were performed for this implementation.
+
+   | Surface | Implemented boundary / remaining external requirement |
+   |---|---|
+   | Product DLL | `official-compile` copies only the run-version DLL and test DLL into isolated `drop.signing/`; native DLL sign/verify precedes packing. |
+   | Test DLL and product copies | `official-pack` verifies timestamped embedded Authenticode signatures and copies exact signed bytes to both ordinary and publish outputs. Third-party dependencies are never re-signed. |
+   | NuGet package | Pack once without rebuilding/restoring, verify packaged DLL equality, then native NuGet sign/verify. `official-stage` verifies the actual package signature before recording `package.sha256`. |
+   | Final test runtime | Stage the publish closure once, omitting only the unused first-party test `.exe` apphost because VSTest loads the test DLL; no duplicate `publish/` subtree. |
+   | Artifact consumption | Integration and checkout-free publication repeat `dotnet nuget verify --all`, first-party Authenticode/run-version verification and package/test byte equality. No signing config or signer access is needed for verification. |
+   | Third-party/nonshipping test dependencies | Owners still must confirm strict scanner policy/treatment. No guessed `policyFile`, scanner exclusions or validation weakening is introduced. |
+   | SBOM/source-build provenance | Platform onboarding and signed-SBOM validation remain independent of DLL/package signatures. |
+
+   The two ESRP input directories contain only the intended first-party DLLs or
+   the one run-version nupkg, not recursive dependency wildcards. Local guards
+   require actual signature verification, not a `signed=true` marker.
+   `Get-AuthenticodeSignature` must report a valid embedded signature with signer
+   and timestamp certificates; NuGet verifies the complete package. Images must
+   have the approved trust roots and verification/revocation endpoint access.
+   Native ESRP verification enforces the selected signing policy; the local guards
+   do not replace ESRP authorization or 1ES provenance validation.
 
    Signer-independent support is implemented now: `sbom.enabled: true`,
    **`validate: true`** and **`continueOnError: false`**. The inspected
@@ -470,7 +510,7 @@ Do not allow queue-time overrides of version or security variables.
    [generation implementation][sbom-generation] propagates `continueOnError`
    to task execution, so false fails closed despite a misleading editor-schema
    description. No SBOM was generated/signed locally and ADO enforcement remains
-   untested. Keep production disabled pending signing policy, implementation and
+   untested. Keep production disabled pending signer onboarding, scanner policy and
    live platform checks. Never sign, repack, rebuild or replace anything after
    Integration, disable validation, or relabel production output to bypass it.
 
@@ -487,7 +527,7 @@ Do not allow queue-time overrides of version or security variables.
    Omitting the flag or setting it true instead selects ignore-missing behavior.
    The [post-validation helper][post-sbom-validation] explicitly recommends false;
    its unchanged one-error handler otherwise emits a warning and succeeds.
-   This inventory policy does not supply or replace the missing signing policy.
+   This inventory policy does not supply or replace signing authorization.
 
 Resources and branch policies are the security boundary, since PRs can modify
 scripts and YAML. Do not enable a connection or secret group until its checks
@@ -554,13 +594,15 @@ versioning, metadata, package identity, result gates, two-template selection,
 stage nesting, credential scope and current-run artifact continuity without
 Azure access. They invoke artifact-hosted release preparation with no publishing
 connection, with the old raw feed/key forcibly empty and CLI tools absent from
-PATH. Missing-connection and other denial paths cannot publish. A fake connection
-name exercises successful **preflight only**, never the native publishing task.
+PATH. Unsigned-package and other denial paths cannot publish. A fake connection
+name cannot make an unsigned package pass. No successful signing or publication
+preflight is simulated by a boolean marker.
 Tests load the **actual** build script to inspect its helpers, then
 execute the exact artifact-hosted entrypoint (not a stripped copy) for help,
 listing, graph export and denial paths. FAKE's machine-readable dependency
-export is checked for exact credential-free, integration and no-rebuild publish
-closures. Introspection is tested with release notes/application settings absent;
+export is checked for exact credential-free, official compile/resume, integration
+and no-rebuild publish closures. Introspection is tested with signing configuration,
+release notes and application settings absent;
 the dependency configuration remains present.
 Package/hash/library mismatch and `--single-target` guard regressions are included.
 Fixtures are removed from the supplied scratch directory. They do not execute Azure YAML
@@ -635,6 +677,27 @@ failed before the new flag and passed afterward; normal
 policy guards. These are source-expression/error-handler tests, **not an actual
 DropValidator/toolkit execution or ADO template expansion**.
 
+The signing-boundary regression was first added against `d8dea902` and failed:
+**“official build has native DLL and NuGet signing boundaries”**. It then passed
+after implementation, alongside real FAKE closure, missing-configuration,
+unsafe-key-code, unsigned/forged-package and single-target denial checks.
+A separate byte-copy fixture exercises exact first-party propagation,
+third-party preservation and single-runtime staging; it does **not** create or
+validate signatures. Actual unsigned fixtures are checked with preinstalled
+Windows Authenticode and `dotnet nuget verify --all` (NU3004), not mocked
+verification. Live ESRP signing and a successful signed-artifact path are
+intentionally not claimed.
+The full normal `dotnet fsi build.fsx -t ci` graph passed **304 contract checks**,
+restore, Release compilation, no-rebuild packing and final unsigned PR staging,
+with signing variables removed and the installed SDK reporting **zero NuGet
+authentication plugins**. It used existing caches, not a new cold restore.
+A real-binary probe found the test-local metadata shadowing described above;
+after the explicit CI version fix, both first-party DLLs passed run-version checks
+and were rejected for missing Authenticode signatures by the actual
+`official-pack` and `official-stage` targets. Neither target created a NuGet
+package or final hash. The actual unsigned nupkg failed NuGet verification with
+NU3004, retained its hash, and still matched the staged product DLL.
+
 The inspected editor schema's `featureFlags` whitelist omits
 `sbomValidatorIgnoreMissing` and rejects it as an additional property.
 This is an explicit schema limitation, not a passing whole-document check:
@@ -661,7 +724,11 @@ Local checks against the inspected 1ES editor schema covered template names,
 pool/source-analysis objects, governed output, release input/context, SDL
 configuration and the selected release-stage shape. The unofficial entrypoint
 also passed local editor-schema checks. Both selected shared Build shapes
-(authentication enabled/disabled) are checked separately: the editor's step
+(unsigned PR and trusted signing) are checked separately. The cached editor schema
+has no ESRP task definition, so the trusted-shape probe excludes the two native
+tasks **in memory only** and separately parses their inline operation JSON,
+checks external bindings and compares DLL parameters with the inspected sample.
+This is not task-specific schema validation. The editor's step
 schema has no compile-time conditional arm, so validation of the whole new
 conditional shared template is not claimed. This schema mixes
 scalar-string ADO fields with JSON-boolean 1ES/task fields, so a plain YAML-to-JSON
@@ -736,6 +803,7 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 [public-feeds]: https://learn.microsoft.com/en-us/azure/devops/artifacts/concepts/feeds?view=azure-devops
 [code-sign-guidance]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/.agents/features/sdl-code-sign-validation.md&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
 [code-sign-sample]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/Samples/CodeSignValidation.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[nuget-signing-sample]: https://github.com/microsoft/v8-jsi/blob/main/.ado/templates/esrp-codesign-nuget.yml
 [deprecated-signing]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Steps/1ES.Signing.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
 [sbom-sample]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/Samples/SBOMPipeline.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
 [sbom-generation]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Core/Steps/SBOM.Generation.Steps.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2

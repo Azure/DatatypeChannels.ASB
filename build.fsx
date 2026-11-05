@@ -140,7 +140,8 @@ module Pipeline =
 
     let required name =
         match System.Environment.GetEnvironmentVariable name with
-        | value when String.IsNullOrWhiteSpace value || value.Contains("$(") ->
+        | value when String.IsNullOrWhiteSpace value
+                     || value.Contains("$(") || value.Contains("${{") || value.Contains("$[") ->
             failwithf "Configure %s before running this operation." name
         | value -> value
 
@@ -200,16 +201,72 @@ module Pipeline =
         packageVersion (File.ReadAllText(Path.Combine(root, "RELEASE_NOTES.md")))
             (required "BUILD_BUILDID") (required "PACKAGE_PATCH_OFFSET")
 
+    [<RequireQualifiedAccess>]
+    module Signing =
+        let requireConfiguration () =
+            for name in
+                [ "ESRP_CONNECTED_SERVICE_NAME"; "ESRP_AUTH_AKV_NAME"
+                  "ESRP_AUTH_CERT_NAME"; "ESRP_AUTH_SIGN_CERT_NAME" ] do
+                required name |> ignore
+            for name in [ "ESRP_APP_REGISTRATION_CLIENT_ID"; "ESRP_APP_REGISTRATION_TENANT_ID" ] do
+                match Guid.TryParse(required name) with
+                | true, value when value <> Guid.Empty -> ()
+                | _ -> invalidOp $"{name} must be a nonempty GUID."
+            for name in [ "ESRP_DLL_KEY_CODE"; "ESRP_NUGET_KEY_CODE" ] do
+                if not (Regex.IsMatch(required name, @"\ACP-[0-9]{6}\z")) then
+                    invalidOp $"{name} must match CP- followed by exactly six digits."
+
+        let assertTrusted () =
+            if not (canTest (required "BUILD_REPOSITORY_NAME") (required "BUILD_REASON")
+                        (required "BUILD_SOURCEBRANCH")) then
+                invalidOp "Signing requires a trusted master run."
+
+        let verifyBinary (path: string) =
+            if not (OperatingSystem.IsWindows()) then
+                invalidOp "Authenticode verification requires the approved Windows image."
+            let command =
+                sprintf """
+$ErrorActionPreference = 'Stop'
+$signature = Get-AuthenticodeSignature -LiteralPath '%s'
+if ($signature.Status -ne 'Valid' -or $signature.SignatureType -ne 'Authenticode' -or
+    $null -eq $signature.SignerCertificate -or $null -eq $signature.TimeStamperCertificate) {
+    throw 'Expected a valid, timestamped embedded Authenticode signature.'
+}
+                    """ (path.Replace("'", "''"))
+            run root "pwsh" [ "-NoProfile"; "-NonInteractive"; "-Command"; command ]
+
+        let verifyPackage path =
+            // Presence is only an early rejection. NuGet must verify the actual signature.
+            use archive = ZipFile.OpenRead path
+            if isNull (archive.GetEntry(".signature.p7s")) then
+                invalidOp "Expected a signed NuGet package; .signature.p7s is missing."
+            dotnet root [ "nuget"; "verify"; "--all"; path ]
+
+    let signingDirectory () = artifactDirectory () + ".signing"
+
+    let assertBinaryVersion path =
+        let version = FileVersionInfo.GetVersionInfo(path).ProductVersion
+        let expected = (currentVersion ()).Split('+')[0]
+        if String.IsNullOrEmpty version || version.Split('+')[0] <> expected then
+            invalidOp "First-party binary version does not match this run."
+
     let writeMetadata () =
         let notes = File.ReadAllLines(Path.Combine(root, "RELEASE_NOTES.md"))
         let note = notes |> Array.find (fun line -> line.StartsWith("* ")) |> fun line -> line.Substring 2
         File.WriteAllText(Path.Combine(root, "Directory.Build.props"), metadata (currentVersion ()) note)
 
-    let copyDirectory (source: string) (destination: string) =
+    let stageTestBinaries artifact =
+        let relative = "tests/DatatypeChannels.ASB.Tests/bin/Release/net10.0/publish"
+        let source = Path.Combine(root, relative)
+        let destination = Path.Combine(artifact, "tests")
+        if Directory.Exists destination then
+            invalidOp "Test staging directory must not already exist."
         for file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories) do
-            let target = Path.Combine(destination, Path.GetRelativePath(source, file))
-            Directory.CreateDirectory(Path.GetDirectoryName target) |> ignore
-            File.Copy(file, target, true)
+            // VSTest loads the DLL; the unused apphost is not part of this artifact.
+            if Path.GetFileName file <> "DatatypeChannels.ASB.Tests.exe" then
+                let target = Path.Combine(destination, Path.GetRelativePath(source, file))
+                Directory.CreateDirectory(Path.GetDirectoryName target) |> ignore
+                File.Copy(file, target, false)
 
     let packageIdentity path =
         use archive = ZipFile.OpenRead path
@@ -234,19 +291,31 @@ module Pipeline =
         use stream = File.OpenRead path
         SHA256.HashData stream |> Convert.ToHexString
 
-    let assertTestLibrary artifact package =
+    let assertPackagedLibrary testLibrary package =
         use archive = ZipFile.OpenRead package
         use assembly = archive.GetEntry("lib/net10.0/DatatypeChannels.ASB.dll").Open()
         let packagedHash = SHA256.HashData assembly |> Convert.ToHexString
-        let testedHash = packageHash (Path.Combine(artifact, "tests/DatatypeChannels.ASB.dll"))
+        let testedHash = packageHash testLibrary
         if packagedHash <> testedHash then
             failwith "The package library differs from the integration test library."
+
+    let assertTestLibrary artifact package =
+        assertPackagedLibrary (Path.Combine(artifact, "tests/DatatypeChannels.ASB.dll")) package
 
     let verifyArtifact artifact =
         let package = packageFile (Path.Combine(artifact, "nuget")) (currentVersion ())
         let expectedHash = File.ReadAllText(Path.Combine(artifact, "package.sha256")).Trim()
         if packageHash package <> expectedHash then failwith "Package hash differs from the build artifact."
         assertTestLibrary artifact package
+        package
+
+    let verifySignedArtifact artifact =
+        let package = verifyArtifact artifact
+        Signing.verifyPackage package
+        for name in [ "DatatypeChannels.ASB.dll"; "DatatypeChannels.ASB.Tests.dll" ] do
+            let path = Path.Combine(artifact, "tests", name)
+            assertBinaryVersion path
+            Signing.verifyBinary path
         package
 
     let stageReleaseTools artifact =
@@ -256,11 +325,86 @@ module Pipeline =
 
     let stageArtifact artifact =
         let package = packageFile (Path.Combine(artifact, "nuget")) (currentVersion ())
-        copyDirectory (Path.Combine(root, "tests/DatatypeChannels.ASB.Tests/bin/Release/net10.0"))
-            (Path.Combine(artifact, "tests"))
+        stageTestBinaries artifact
         assertTestLibrary artifact package
         File.WriteAllText(Path.Combine(artifact, "package.sha256"), packageHash package)
         stageReleaseTools artifact
+
+    let prepareBinarySigning artifact =
+        Signing.assertTrusted ()
+        Signing.requireConfiguration ()
+        let directory = signingDirectory ()
+        for path in [ directory; artifact ] do
+            if Directory.Exists path
+               && not (Directory.EnumerateFileSystemEntries(path) |> Seq.isEmpty) then
+                invalidOp "Official compilation requires empty artifact and signing directories."
+        Directory.CreateDirectory directory |> ignore
+        for project, name in
+            [ "src/DatatypeChannels.ASB", "DatatypeChannels.ASB.dll"
+              "tests/DatatypeChannels.ASB.Tests", "DatatypeChannels.ASB.Tests.dll" ] do
+            let source = Path.Combine(root, project, "bin/Release/net10.0", name)
+            assertBinaryVersion source
+            File.Copy(source, Path.Combine(directory, name), false)
+
+    let verifySigningBinaries () =
+        let directory = signingDirectory ()
+        if not (Directory.Exists directory) then
+            invalidOp "First-party signing directory is missing; resume targets never rebuild."
+        let expected =
+            [ "DatatypeChannels.ASB.dll"; "DatatypeChannels.ASB.Tests.dll" ]
+            |> List.map (fun name -> Path.Combine(directory, name))
+            |> Set.ofList
+        let actual = Directory.GetFiles(directory, "*", SearchOption.AllDirectories) |> Set.ofArray
+        if actual <> expected then
+            invalidOp "Signing input must contain exactly the two first-party DLLs."
+        for path in expected do
+            assertBinaryVersion path
+            Signing.verifyBinary path
+
+    let copySignedBinaries () =
+        for project, names in
+            [ "src/DatatypeChannels.ASB", [ "DatatypeChannels.ASB.dll" ]
+              "tests/DatatypeChannels.ASB.Tests",
+                  [ "DatatypeChannels.ASB.dll"; "DatatypeChannels.ASB.Tests.dll" ] ] do
+            for relative in [ "bin/Release/net10.0"; "bin/Release/net10.0/publish" ] do
+                for name in names do
+                    let destination = Path.Combine(root, project, relative, name)
+                    if not (File.Exists destination) then
+                        invalidOp "Compiled output is missing; resume targets never rebuild."
+                    File.Copy(Path.Combine(signingDirectory (), name), destination, true)
+
+    let packLibrary artifact =
+        let packages = Path.Combine(artifact, "nuget")
+        dotnet root
+            [ "pack"; library; "-c"; "Release"; "--no-build"; "--no-restore"; "--output"; packages ]
+
+    let packSignedBinaries artifact =
+        Signing.assertTrusted ()
+        verifySigningBinaries ()
+        if Directory.Exists(Path.Combine(artifact, "nuget")) then
+            invalidOp "Refusing to repack existing official packages; start a fresh build."
+        copySignedBinaries ()
+        packLibrary artifact
+        let package = packageFile (Path.Combine(artifact, "nuget")) (currentVersion ())
+        let signedLibrary = Path.Combine(signingDirectory (), "DatatypeChannels.ASB.dll")
+        assertPackagedLibrary signedLibrary package
+
+    let stageSignedArtifact artifact =
+        Signing.assertTrusted ()
+        if File.Exists(Path.Combine(artifact, "package.sha256")) then
+            invalidOp "Refusing to restage a sealed official artifact."
+        verifySigningBinaries ()
+        let package = packageFile (Path.Combine(artifact, "nuget")) (currentVersion ())
+        Signing.verifyPackage package
+        // Check ordinary and publish outputs; no stale first-party copy may reach the drop.
+        let tests = Path.Combine(root, "tests/DatatypeChannels.ASB.Tests/bin/Release/net10.0")
+        for name in [ "DatatypeChannels.ASB.dll"; "DatatypeChannels.ASB.Tests.dll" ] do
+            let signedHash = packageHash (Path.Combine(signingDirectory (), name))
+            for path in Directory.GetFiles(tests, name, SearchOption.AllDirectories) do
+                if packageHash path <> signedHash then
+                    invalidOp "Test output differs from the verified signed binary."
+        stageArtifact artifact
+        verifySignedArtifact artifact |> ignore
 
     let assertTrusted () =
         if not (canTest (required "BUILD_REPOSITORY_NAME") (required "BUILD_REASON")
@@ -290,6 +434,7 @@ module Pipeline =
     let testArtifact artifact =
         // FAKE supports --single-target; the privileged boundary must still fail closed.
         assertTrusted ()
+        verifySignedArtifact artifact |> ignore
         let directory = Path.Combine(artifact, "tests")
         let settings = Path.Combine(directory, "local.settings.json")
         let results = Path.Combine(artifact, "results")
@@ -306,7 +451,7 @@ module Pipeline =
 
     let preparePublication artifact =
         assertRelease ()
-        let package = verifyArtifact artifact
+        let package = verifySignedArtifact artifact
         required "NUGET_PUBLISH_SERVICE_CONNECTION" |> ignore
         // 1ES owns the push via its supported NuGet task; do not hide a raw push in a script.
         printfn "Validated %s (SHA256 %s)." (Path.GetFileName package) (packageHash package)
@@ -432,15 +577,14 @@ Target.create "ci-restore" (fun _ ->
 
 Target.description "Compile Release library and integration binaries without restoring."
 Target.create "ci-build" (fun _ ->
-    Pipeline.dotnet root ["publish"; Pipeline.solution; "-c"; "Release"; "--no-restore"]
+    // Test-local Directory.Build.props shadows root metadata; version both first-party DLLs.
+    let version = Pipeline.currentVersion ()
+    Pipeline.dotnet root
+        [ "publish"; Pipeline.solution; "-c"; "Release"; "--no-restore"; $"-p:Version={version}" ]
 )
 
 Target.description "Pack the already compiled library without building or restoring."
-Target.create "ci-package" (fun _ ->
-    let packages = System.IO.Path.Combine(Pipeline.artifactDirectory (), "nuget")
-    Pipeline.dotnet root
-        ["pack"; Pipeline.library; "-c"; "Release"; "--no-build"; "--no-restore"; "--output"; packages]
-)
+Target.create "ci-package" (fun _ -> Pipeline.packLibrary (Pipeline.artifactDirectory ()))
 
 Target.description "Stage package, matching test binaries, hash and this entrypoint into the 1ES drop."
 Target.create "ci-stage" (fun _ -> Pipeline.stageArtifact (Pipeline.artifactDirectory ()))
@@ -448,12 +592,29 @@ Target.create "ci-stage" (fun _ -> Pipeline.stageArtifact (Pipeline.artifactDire
 Target.description "Build/check/package graph without Azure or publication credentials."
 Target.create "ci" ignore
 
+Target.description "Require trusted master and explicit ESRP v6 configuration."
+Target.create "signing-preflight" (fun _ ->
+    Pipeline.Signing.assertTrusted ()
+    Pipeline.Signing.requireConfiguration ()
+)
+
+Target.description "Compile/check and isolate first-party DLLs; pause for native ESRP signing."
+Target.create "official-compile" (fun _ ->
+    Pipeline.prepareBinarySigning (Pipeline.artifactDirectory ())
+)
+
+Target.description "Resume after DLL signing: verify/copy signed DLLs and pack without build or restore."
+Target.create "official-pack" (fun _ -> Pipeline.packSignedBinaries (Pipeline.artifactDirectory ()))
+
+Target.description "Resume after NuGet signing: verify signatures, then hash/stage; never build or pack."
+Target.create "official-stage" (fun _ -> Pipeline.stageSignedArtifact (Pipeline.artifactDirectory ()))
+
 Target.description "Require trusted master and ancestry on master before Azure login."
 Target.create "check-trust" (fun _ -> Pipeline.assertTrusted ())
 
-Target.description "Validate the current-run package hash, identity and matching test library."
+Target.description "Validate signed package, hash, identity and matching signed test binaries."
 Target.create "integration-artifact" (fun _ ->
-    Pipeline.verifyArtifact (Pipeline.artifactDirectory ()) |> ignore
+    Pipeline.verifySignedArtifact (Pipeline.artifactDirectory ()) |> ignore
 )
 
 Target.description "Test the immutable drop against existing Service Bus; requires trusted Azure login."
@@ -462,9 +623,9 @@ Target.create "integration" (fun _ -> Pipeline.testArtifact (Pipeline.artifactDi
 Target.description "Require manual protected master, explicit opt-in and successful integration."
 Target.create "publish-check" (fun _ -> Pipeline.assertRelease ())
 
-Target.description "Verify the tested artifact without checkout, restore, clean, build or pack."
+Target.description "Verify tested signatures/hash without checkout, restore, clean, build or pack."
 Target.create "publish-artifact" (fun _ ->
-    Pipeline.verifyArtifact (Pipeline.artifactDirectory ()) |> ignore
+    Pipeline.verifySignedArtifact (Pipeline.artifactDirectory ()) |> ignore
 )
 
 Target.description "Validate the tested package for 1ES.PublishNuGet@1; the governed task owns the push."
@@ -504,6 +665,12 @@ Target.create "graph" (fun parameters ->
   ==> "ci-package"
   ==> "ci-stage"
   ==> "ci"
+
+// Soft ordering keeps signing configuration out of the unsigned PR closure.
+"signing-preflight" ?=> "ci-preflight" |> ignore
+"signing-preflight" ?=> "check" |> ignore
+"official-compile" <== [ "signing-preflight"; "ci-build" ]
+// Native ESRP tasks separate these entrypoints; resume closures intentionally stand alone.
 
 "check-trust"
   ==> "integration-artifact"

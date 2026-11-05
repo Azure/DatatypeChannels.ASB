@@ -19,6 +19,49 @@ let rejects name action =
     let rejected = try action (); false with _ -> true
     check name rejected
 
+let sharedBuild = File.ReadAllText(Path.Combine(Build.root, ".pipelines/build.yml"))
+check "official build has native DLL and NuGet signing boundaries"
+    (sharedBuild.Contains("name: signArtifacts")
+     && sharedBuild.Contains("EsrpCodeSigning@6")
+     && sharedBuild.Contains("dotnet fsi build.fsx -t official-pack")
+     && sharedBuild.Contains("dotnet fsi build.fsx -t official-stage"))
+
+let signingConfiguration =
+    [ "ESRP_CONNECTED_SERVICE_NAME", "unit-test-only-not-a-connection"
+      "ESRP_APP_REGISTRATION_CLIENT_ID", string (Guid.NewGuid())
+      "ESRP_APP_REGISTRATION_TENANT_ID", string (Guid.NewGuid())
+      "ESRP_AUTH_AKV_NAME", "unit-test-only-vault"
+      "ESRP_AUTH_CERT_NAME", "unit-test-only-auth"
+      "ESRP_AUTH_SIGN_CERT_NAME", "unit-test-only-request"
+      "ESRP_DLL_KEY_CODE", "CP-230012"
+      "ESRP_NUGET_KEY_CODE", "CP-401405" ]
+
+let withEnvironment environment action =
+    let original = environment |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable name)
+    try
+        environment |> List.iter Environment.SetEnvironmentVariable
+        action ()
+    finally
+        original |> List.iter Environment.SetEnvironmentVariable
+
+// Configuration-shape tests only: these invented fixture values never authorize or invoke ESRP.
+withEnvironment signingConfiguration (fun () ->
+    Signing.requireConfiguration ()
+    check "complete signing configuration shape accepted without external calls" true
+    for name, _ in signingConfiguration do
+        for value in [ ""; " "; "$(UNSET)"; "${{ unresolved }}"; "$[unresolved]" ] do
+            withEnvironment [ (name, value) ] (fun () ->
+                rejects $"signing rejects missing/unexpanded {name}: {value}"
+                    Signing.requireConfiguration)
+    for name in [ "ESRP_APP_REGISTRATION_CLIENT_ID"; "ESRP_APP_REGISTRATION_TENANT_ID" ] do
+        for value in [ "not-a-guid"; string Guid.Empty ] do
+            withEnvironment [ (name, value) ] (fun () ->
+                rejects $"signing rejects invalid GUID {name}: {value}" Signing.requireConfiguration)
+    for name in [ "ESRP_DLL_KEY_CODE"; "ESRP_NUGET_KEY_CODE" ] do
+        for value in [ "CP-1"; "CP-230012\n"; "CP-230012\"}"; "cp-230012"; "CP-１２３４５６" ] do
+            withEnvironment [ (name, value) ] (fun () ->
+                rejects $"signing rejects unsafe key code {name}: {value}" Signing.requireConfiguration))
+
 let configPath = Path.Combine(Build.root, "NuGet.config")
 check "repository has explicit NuGet configuration" (File.Exists configPath)
 let consumptionFeed =
@@ -171,6 +214,7 @@ try
              "SERVICE_BUS_NAMESPACE"; "AZURE_CLIENT_ID"; "AZURE_TENANT_ID"
              "AZURE_CLIENT_SECRET"; "AZURE_FEDERATED_TOKEN_FILE"] do
             start.Environment.Remove name |> ignore
+        for name, _ in signingConfiguration do start.Environment.Remove name |> ignore
         start.Environment["AZURE_CONFIG_DIR"] <- Path.Combine(fixtureRoot, "no-azure-session")
         // FSI uses the absolute installed host. No build, Git or Azure CLI is on PATH.
         start.Environment["PATH"] <- Path.Combine(fixtureRoot, "no-tools")
@@ -201,7 +245,8 @@ try
     check "list includes artifact publisher" (listing.Contains("publish") && listing.Contains("ci-package"))
     let graph =
         expect "actual graph without application settings or release notes" true "DependencyGraph for Target publish"
-            ["-t"; "graph"; "publish"; "ci"; "integration"; "test"] []
+            ["-t"; "graph"; "publish"; "ci"; "integration"; "test"
+             "official-compile"; "official-pack"; "official-stage"] []
     check "graph did not run build or cloud targets"
         (not (graph.Contains("Starting target 'ci-build'") || graph.Contains("Starting target 'integration'")))
     let info = Path.Combine(fixtureRoot, "targets.json")
@@ -228,6 +273,17 @@ try
     check "CI exact credential-free closure"
         (closure "ci" =
             set ["ci"; "ci-stage"; "ci-package"; "ci-build"; "ci-restore"; "ci-meta"; "check"; "ci-preflight"])
+    check "official compilation stops before pack and stage"
+        (closure "official-compile" =
+            set [ "official-compile"; "signing-preflight"; "ci-build"; "ci-restore"
+                  "ci-meta"; "check"; "ci-preflight" ])
+    for name in [ "official-pack"; "official-stage"; "signing-preflight" ] do
+        check $"{name} has a standalone real FAKE closure" (closure name = set [ name ])
+    let softDependencies =
+        targets["ci-preflight"].GetProperty("softDependencies").EnumerateArray()
+        |> Seq.map (fun target -> target.GetProperty("name").GetString()) |> Set.ofSeq
+    check "signing preflight ordered before compile without contaminating PR closure"
+        (softDependencies = set [ "signing-preflight" ])
     check "integration exact tested-artifact closure"
         (closure "integration" = set ["integration"; "integration-artifact"; "check-trust"])
     check "pack has an explicit compiled-build dependency" (dependencies "ci-package" = set ["ci-build"])
@@ -246,15 +302,95 @@ try
         (missingToolMessage.Contains("Required preinstalled tool") && missingToolMessage.Contains("is unavailable"))
     check "preflight did not write build metadata"
         (not (File.Exists(Path.Combine(fixtureRoot, "Directory.Build.props"))))
-    let messages =
-        expect "release target reaches missing-connection rejection" false "Configure NUGET_PUBLISH_SERVICE_CONNECTION"
-            ["-t"; "publish"] releaseEnvironment
-    check "release target rejects missing connection without requiring git"
-        (messages.Contains("Configure NUGET_PUBLISH_SERVICE_CONNECTION") && not (messages.Contains("git failed")))
-    expect "release target prepares but does not push" true "This target does not publish packages."
+    expect "official compile rejects missing configuration before building" false
+        "Configure ESRP_CONNECTED_SERVICE_NAME" [ "-t"; "official-compile" ] releaseEnvironment |> ignore
+    expect "official preflight rejects unexpanded configuration" false "Configure ESRP_CONNECTED_SERVICE_NAME"
+        [ "-t"; "signing-preflight" ]
+        (releaseEnvironment @ [ ("ESRP_CONNECTED_SERVICE_NAME", "$(ESRP_CONNECTED_SERVICE_NAME)") ]) |> ignore
+    for target in [ "official-compile"; "official-pack"; "official-stage" ] do
+        expect $"{target} cannot bypass trust with single-target" false "Signing requires a trusted master run."
+            [ "-s"; "-t"; target ] (releaseEnvironment @ [ ("BUILD_REASON", "PullRequest") ]) |> ignore
+    expect "official pack cannot silently build missing signed inputs" false
+        "resume targets never rebuild" [ "-t"; "official-pack" ] releaseEnvironment |> ignore
+    expect "official stage refuses to reseal an existing artifact" false
+        "Refusing to restage a sealed official artifact."
+        [ "-t"; "official-stage" ] releaseEnvironment |> ignore
+    File.Delete(Path.Combine(fixtureRoot, "package.sha256"))
+    expect "official stage cannot silently build missing signed inputs" false
+        "resume targets never rebuild" [ "-t"; "official-stage" ] releaseEnvironment |> ignore
+    File.WriteAllText(Path.Combine(fixtureRoot, "package.sha256"), originalHash)
+    check "official resume rejection wrote no build metadata"
+        (not (File.Exists(Path.Combine(fixtureRoot, "Directory.Build.props"))))
+    expect "release rejects unsigned package without requiring Git or a signer" false
+        "Expected a signed NuGet package" [ "-t"; "publish" ] releaseEnvironment |> ignore
+    expect "publication connection cannot authorize unsigned package" false "Expected a signed NuGet package"
         ["-t"; "publish"]
         (releaseEnvironment @ [("NUGET_PUBLISH_SERVICE_CONNECTION", "nonexistent-test-connection")]) |> ignore
+    expect "single-target publish cannot bypass signature verification" false
+        "Expected a signed NuGet package" [ "-s"; "-t"; "publish" ] releaseEnvironment |> ignore
+    expect "integration artifact gate rejects unsigned package" false "Expected a signed NuGet package"
+        [ "-s"; "-t"; "integration-artifact" ] releaseEnvironment |> ignore
     check "publication preflight preserves exact tested package hash" (packageHash artifactPackage = originalHash)
+    rejects "real Authenticode verifier rejects unsigned fixture"
+        (fun () -> Signing.verifyBinary testLibrary)
+    rejects "real dotnet NuGet verifier rejects unsigned fixture"
+        (fun () -> dotnet fixtureRoot [ "nuget"; "verify"; "--all"; artifactPackage ])
+    // A marker or even a forged signature entry is not successful signature verification.
+    use forged = ZipFile.Open(artifactPackage, ZipArchiveMode.Update)
+    use marker = new StreamWriter(forged.CreateEntry(".signature.p7s").Open())
+    marker.Write("signed=true")
+    marker.Dispose()
+    forged.Dispose()
+    rejects "signature presence alone is not proof"
+        (fun () -> Signing.verifyPackage artifactPackage)
+    File.Delete artifactPackage
+    writePackage artifactPackage "DatatypeChannels.ASB" artifactVersion
+    File.WriteAllText(Path.Combine(fixtureRoot, "package.sha256"), packageHash artifactPackage)
+    let copyFixture = Path.Combine(fixtureRoot, "copy-orchestration")
+    Directory.CreateDirectory copyFixture |> ignore
+    stageReleaseTools copyFixture
+    let copyProbe = Path.Combine(copyFixture, "CopyProbe.fsx")
+    File.WriteAllText(copyProbe, """
+#load "build.fsx"
+open System
+open System.IO
+open Build.Pipeline
+
+// Byte-copy orchestration fixture only. No signatures are created or assumed valid.
+let artifact = Path.Combine(Build.root, "drop")
+Environment.SetEnvironmentVariable("ARTIFACT_DIRECTORY", artifact)
+let input = signingDirectory ()
+Directory.CreateDirectory input |> ignore
+let product = "DatatypeChannels.ASB.dll"
+let tests = "DatatypeChannels.ASB.Tests.dll"
+for name in [ product; tests ] do File.WriteAllText(Path.Combine(input, name), "final-" + name)
+for project, names in
+    [ "src/DatatypeChannels.ASB", [ product ]
+      "tests/DatatypeChannels.ASB.Tests", [ product; tests ] ] do
+    for relative in [ "bin/Release/net10.0"; "bin/Release/net10.0/publish" ] do
+        let directory = Path.Combine(Build.root, project, relative)
+        Directory.CreateDirectory directory |> ignore
+        for name in names do File.WriteAllText(Path.Combine(directory, name), "old")
+let published = Path.Combine(Build.root, "tests/DatatypeChannels.ASB.Tests/bin/Release/net10.0/publish")
+File.WriteAllText(Path.Combine(published, "ThirdParty.dll"), "do-not-resign")
+File.WriteAllText(Path.Combine(published, "DatatypeChannels.ASB.Tests.exe"), "unused-apphost")
+copySignedBinaries ()
+for path in Directory.GetFiles(Build.root, "*.dll", SearchOption.AllDirectories) do
+    let name = Path.GetFileName path
+    let expected = if name = "ThirdParty.dll" then "do-not-resign" else "final-" + name
+    if File.ReadAllText path <> expected then failwith "Exact-byte propagation failed."
+stageTestBinaries artifact
+let staged = Path.Combine(artifact, "tests")
+for name in [ product; tests; "ThirdParty.dll" ] do
+    if File.ReadAllBytes(Path.Combine(staged, name)) <> File.ReadAllBytes(Path.Combine(published, name)) then
+        failwith "Staging changed runtime bytes."
+if File.Exists(Path.Combine(staged, "DatatypeChannels.ASB.Tests.exe"))
+   || Directory.Exists(Path.Combine(staged, "publish")) then
+    failwith "Unused apphost or duplicate output staged."
+printfn "PASS: byte-copy fixture only; not a successful signature or ESRP execution"
+    """)
+    dotnet copyFixture [ "fsi"; copyProbe ]
+    check "copy orchestration propagates exact bytes, preserves dependencies and stages runtime once" true
     expect "release requires successful integration" false "successful integration"
         ["-t"; "publish"] (releaseEnvironment @ [("INTEGRATION_SUCCEEDED", "false")]) |> ignore
     expect "release execution requires explicit opt-in" false "manual master run"
@@ -363,6 +499,33 @@ check "integration authenticates before its first FSI invocation"
 check "PR restore authentication defaults to off"
     (not (prYaml.Contains("authenticateRestore:"))
      && buildYaml.Contains("name: authenticateRestore\n  type: boolean\n  default: false"))
+check "native signing is compile-time official only"
+    (yaml.Contains("signArtifacts: true")
+     && buildYaml.Contains("name: signArtifacts\n  type: boolean\n  default: false")
+     && not (prYaml.Contains("signArtifacts:") || prYaml.Contains("ESRP_")))
+let signingSteps = section "    - ${{ if eq(parameters.signArtifacts, true) }}:" "\nnever-match" buildYaml
+let unsignedSteps = section "    - ${{ if eq(parameters.signArtifacts, false) }}:"
+                            "    - ${{ if eq(parameters.signArtifacts, true) }}:" buildYaml
+check "unsigned PR branch contains no signing resource reference"
+    (unsignedSteps.Contains("dotnet fsi build.fsx -t ci")
+     && not (unsignedSteps.Contains("ESRP_") || unsignedSteps.Contains("EsrpCodeSigning@")))
+check "signing tasks exist only within the trusted compile-time arm"
+    (buildYaml.Replace(signingSteps, "").Contains("EsrpCodeSigning@") |> not)
+check "official native boundaries follow compile, DLL signing, pack, NuGet signing, stage order"
+    ([ "dotnet fsi build.fsx -t official-compile"; "\"OperationCode\": \"SigntoolSign\""
+       "\"OperationCode\": \"SigntoolVerify\""; "dotnet fsi build.fsx -t official-pack"
+       "\"OperationCode\": \"NuGetSign\""; "\"OperationCode\": \"NuGetVerify\""
+       "dotnet fsi build.fsx -t official-stage" ]
+     |> List.map (fun value -> signingSteps.IndexOf(value, StringComparison.Ordinal))
+     |> List.pairwise |> List.forall (fun (first, second) -> first >= 0 && first < second))
+check "binary signing uses only the isolated first-party directory"
+    (signingSteps.Contains("FolderPath: $(Build.ArtifactStagingDirectory)/drop.signing")
+     && signingSteps.Contains("Pattern: '*.dll'") && not (signingSteps.Contains("**/")))
+check "NuGet signing operates only on the already-packed NuGet directory"
+    (signingSteps.Contains("FolderPath: $(Build.ArtifactStagingDirectory)/drop/nuget")
+     && signingSteps.Contains("Pattern: '*.nupkg'"))
+check "official signing cannot fall back to unsigned CI"
+    (not (signingSteps.Contains("build.fsx -t ci") || signingSteps.Contains("continueOnError:")))
 check "release cannot authenticate dependency acquisition"
     (not (release.Contains("NuGetAuthenticate@") || release.Contains("NUGET_RESTORE_SERVICE_CONNECTION")))
 
@@ -486,7 +649,8 @@ check "successful integration required" (yaml.Contains("eq(dependencies.Integrat
 check "no missing-test success" (yaml.Contains("failTaskOnMissingResultsFile: true"))
 check "release approval environment" (yaml.Contains("environment: DatatypeChannels-ASB-Release"))
 check "no SDK installer" (not (combinedYaml.Contains("UseDotNet@")))
-check "no GitHub identity" (not (combinedYaml.Contains("CLIENT_ID") || combinedYaml.Contains("id-token")))
+check "no GitHub identity"
+    (not (combinedYaml.Contains("AZURE_CLIENT_ID") || combinedYaml.Contains("id-token")))
 check "only build.fsx orchestrates the build"
     (not (File.Exists(Path.Combine(root, "eng/RunPipeline.fsx")))
      && not (File.Exists(Path.Combine(root, "eng/Pipeline.fsx")))
@@ -499,6 +663,13 @@ check "release maps successful stage prerequisite" (release.Contains("INTEGRATIO
 let buildSource = File.ReadAllText(Path.Combine(root, "build.fsx"))
 check "CI restore explicitly consumes repository config"
     (buildSource.Contains("""["restore"; Pipeline.solution; "--configfile"; Pipeline.nugetConfig]"""))
+check "both pack paths forbid rebuild and restore"
+    (buildSource.Contains("""[ "pack"; library; "-c"; "Release"; "--no-build"; "--no-restore"; "--output"; packages ]"""))
+check "CI versions test binaries despite test-local Directory.Build.props"
+    (buildSource.Contains("""[ "publish"; Pipeline.solution; "-c"; "Release"; "--no-restore"; $"-p:Version={version}" ]"""))
+check "signature checks invoke actual platform verifiers"
+    (buildSource.Contains("Get-AuthenticodeSignature -LiteralPath")
+     && buildSource.Contains("""[ "nuget"; "verify"; "--all"; path ]"""))
 check "local FAKE restore explicitly consumes repository config"
     (buildSource.Contains("ConfigFile = Some Pipeline.nugetConfig"))
 check "no pipeline source override or FSI feed injection"

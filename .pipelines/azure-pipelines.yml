@@ -38,8 +38,7 @@ extends:
         name: $(TRUSTED_SOURCE_ANALYSIS_POOL_NAME)
         image: $(TRUSTED_SOURCE_ANALYSIS_POOL_IMAGE)
         os: windows
-      # Validation is not a signer. Administrators must establish signing before
-      # enabling production; do not disable this check to make unsigned builds pass.
+      # Native ESRP signing runs in Build; this independent gate must remain strict.
       codeSignValidation:
         enabled: true
         break: true
@@ -56,6 +55,7 @@ extends:
               in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
               eq(variables['Build.SourceBranch'], 'refs/heads/master'))
         authenticateRestore: true
+        signArtifacts: true
 
     - stage: Integration
       dependsOn: Build
