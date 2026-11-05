@@ -337,12 +337,27 @@ Do not allow queue-time overrides of version or security variables.
    exact configured feed when the pipeline is outside `avs-oss`. For a pipeline
    in `avs-oss`, explicitly set it empty to use the task's same-organization job
    identity support. Do not leave an unresolved macro or reuse the release
-   publication connection. Grant build consumers only feed read access;
-   upstream package saving must be done separately by an authorized feed curator.
+   publication connection. The **trusted restore identity** needs
+   [Feed and Upstream Reader (Collaborator)][feed-permissions] on
+   `OSS-FSharp-Consumption`, not just Feed Reader. This lets authenticated
+   restores save missing public packages from the configured NuGet.org upstream;
+   it does not grant package-publishing or feed-administration permission.
+   `NuGetAuthenticate@1` is therefore required for trusted upstream consumption
+   even while the feed is public. The task authenticates the identity; it does
+   not grant that role or configure upstream sources.
+
+   For same-organization authentication, configure the actual scoped Build
+   Service identity used by the trusted job. For an external restore connection,
+   configure its backing identity and credential scope for upstream saving.
+   If PR and trusted jobs share a Build Service identity, do not grant that
+   shared identity upstream-saving rights: isolate the trusted identity/project
+   or use a separately authorized restore connection inaccessible to PR jobs.
+   Check job-token access as well as connection permissions; omitting an
+   authentication task alone is not an authorization boundary.
    Local cold consumption with existing authentication was exercised; the ADO
-   task, connection/identity authorization and agent image were not. Upstream
-   saving requires [Collaborator or higher][upstream-sources]; do not broaden
-   PR permissions or give every consumer that role.
+   task, connection/identity authorization and agent image were not. These are
+   required administrator settings, not role assignments made by this change.
+   Read-only consumers and PR jobs must not inherit the trusted identity's role.
 
    **PR/fork flow stays unauthenticated.** No authentication task/restore
    connection is requested by the PR entrypoint. Resource permissions must deny
@@ -350,7 +365,9 @@ Do not allow queue-time overrides of version or security variables.
    shared parameter. Never export trusted job tokens, PATs, Azure identities or
    credential-provider sessions to forks. Public saved packages can be read
    anonymously; unavailable/unsaved dependencies fail closed. Dependency changes
-   need trusted curation before a cold fork build. Microsoft's current
+   need upstream saving by an authorized trusted pipeline or curator before a
+   cold fork build. Do not run unreviewed PR code with trusted credentials just
+   to populate the feed. Microsoft's current
    [public-feed lifecycle guidance][public-feeds] says existing public projects
    convert to private starting in **2027**; anonymous feed access then ends.
    Owners must provide an approved anonymous-readable consumption path before
@@ -800,6 +817,7 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 [oss-consumption-metadata]: https://feeds.dev.azure.com/avs-oss/Public/_apis/packaging/feeds/OSS-FSharp-Consumption?api-version=7.1
 [create-feed]: https://learn.microsoft.com/en-us/rest/api/azure/devops/artifacts/feed-management/create-feed?view=azure-devops-rest-7.1
 [upstream-sources]: https://learn.microsoft.com/en-us/azure/devops/artifacts/concepts/upstream-sources?view=azure-devops
+[feed-permissions]: https://learn.microsoft.com/en-us/azure/devops/artifacts/feeds/feed-permissions?view=azure-devops#feed-roles-and-permissions
 [public-feeds]: https://learn.microsoft.com/en-us/azure/devops/artifacts/concepts/feeds?view=azure-devops
 [code-sign-guidance]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/.agents/features/sdl-code-sign-validation.md&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
 [code-sign-sample]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/Samples/CodeSignValidation.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2

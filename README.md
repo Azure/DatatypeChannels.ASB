@@ -21,7 +21,8 @@ Pre-requisites:
 - Access to the shared `avs-oss/Public/OSS-FSharp-Consumption` feed in
   `NuGet.config`. Empty-cache solution, FSI and existing tool-manifest restores
   passed anonymously after authorized upstream caching. New dependency versions
-  must be saved by a trusted curator before credential-free PRs can consume them.
+  must be saved by an authorized trusted pipeline or curator before
+  credential-free PRs can consume them.
   Release images still require preseeded F# build dependencies. See the
   [setup guide](docs/azure-pipelines.md#required-administrator-configuration).
 - Azure CLI only for explicitly requested local provisioning/integration
@@ -68,8 +69,11 @@ signing between deliberate FAKE target boundaries. ESRP identity, vault,
 certificates, authorized key codes, resource approvals and live 1ES validation
 remain external prerequisites; this is not evidence of production readiness.
 Trusted Build and Integration authenticate dependency resolution with
-`NuGetAuthenticate@1` before FSI. PR/fork jobs do not receive that task or
-connection; their approved dependency closure must be anonymously readable.
+`NuGetAuthenticate@1` before FSI. The trusted restore identity requires
+**Feed and Upstream Reader (Collaborator)** permission to save packages from the
+feed's NuGet.org upstream, even though saved packages are public. PR/fork jobs
+must not share that privileged identity or receive the task/connection; their
+approved dependency closure must be anonymously readable.
 The shared stage defaults to unsigned `build.fsx -t ci` for PRs, without signing
 configuration or access. Official builds select `official-compile` → native DLL
 sign/verify → `official-pack` (no rebuild) → native NuGet sign/verify →
