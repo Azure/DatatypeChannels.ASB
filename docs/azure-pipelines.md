@@ -7,9 +7,11 @@ credentials were removed. **Do not recreate the GitHub federated credentials**,
 restore `AZURE_CREDENTIALS`, or add a client secret as a workaround.
 
 This repository supplies YAML and scripts, not a configured live pipeline.
-No ADO resources, permissions, identities, secrets, or Azure resources are
-created by this change. Administrators must complete the setup below before
-enabling trusted runs. The WI is in `msazure/One`; the owning team must confirm
+The explicitly authorized **OSS-FSharp-Consumption dependency feed** was created
+in the existing `avs-oss/Public` project. No other resources, explicit permission
+changes, identities or service connections were created. Administrators must
+complete the setup below before enabling trusted runs. The WI is in `msazure/One`;
+the owning team must confirm
 the approved pipeline hosting project and policies rather than assuming that a
 work-item project authorizes public-repository builds.
 
@@ -152,8 +154,8 @@ graph; local documentation targets remain unchanged.
 
 ### One target surface, separate dependency graphs
 
-All targets have descriptions in FAKE's listing. Introspection does not load
-release notes or settings, look up secrets, authenticate, provision, publish, or
+All targets have descriptions in FAKE's listing. Introspection target bodies do
+not load release notes or settings, look up secrets, authenticate, provision, publish, or
 execute any inspected target bodies. The `graph` target calls FAKE's own graph
 printer; it has no build dependencies.
 
@@ -247,16 +249,30 @@ Do not allow queue-time overrides of version or security variables.
    cleanup alone is not machine isolation. Do not give PR agents managed
    identities, persistent Azure/CLI sessions, secrets, or access to the trusted
    pool, including through automatic 1ES source-analysis jobs.
-3. **Internal-only restore source and current access blocker.** Repository
+3. **Internal-only restore source and verified cold-consumption flow.** Repository
    `NuGet.config` selects only
-   `https://pkgs.dev.azure.com/avs-oss/Public/_packaging/PS-Consumption/nuget/v3/index.json`.
-   This is the consumption feed in public Management's
+   `https://pkgs.dev.azure.com/avs-oss/Public/_packaging/OSS-FSharp-Consumption/nuget/v3/index.json`.
+   Public Management's
    [NuGet configuration][management-nuget] and [team variables][management-feed-vars]
-   at commit `f8642c4a1c97ca68f4f23032b7b25cee6975e864`, explicitly approved for
-   reuse. [Read-only feed metadata][consumption-metadata] confirms organization **avs-oss**, project
-   **Public** (`c12681cb-56b3-4846-8768-fb04c70b5507`, visibility Public), feed
-   **PS-Consumption** (`a4662fd6-dbb1-485a-8a7e-e8254d11f6da`). This is not a
-   private feed simply because an unsaved upstream lookup returns 401.
+   at commit `f8642c4a1c97ca68f4f23032b7b25cee6975e864` established the existing
+   **avs-oss/Public** ownership context. PS-Consumption was tried first, but its
+   [metadata][consumption-metadata] lists only PowerShell Gallery and
+   AdminTools@Local upstreams; it cannot supply this .NET closure.
+   Authenticated inventory found no suitable shared .NET feed.
+
+   Following explicit authorization, the documented [Create Feed API][create-feed]
+   returned **201** for **OSS-FSharp-Consumption**
+   (`1c9221b0-b7ed-49b3-8520-8d0bfc5618e5`) in existing project **Public**
+   (`c12681cb-56b3-4846-8768-fb04c70b5507`, visibility Public).
+   [Live metadata][oss-consumption-metadata] and its HTTP-200 v3 index confirm the
+   actual endpoint. Its **sole upstream is public NuGet.org**
+   (`https://api.nuget.org/v3/index.json`, status `ok`), not an internal/private
+   feed. Public packages are consumed through Azure Artifacts, never through a
+   client-side NuGet.org fallback. PS-Consumption was not modified; no project
+   visibility or explicit role assignments were changed. The new feed uses the
+   existing project's ownership/visibility defaults. No built ASB package was
+   uploaded to it.
+
    `<clear />` removes inherited package sources. Inherited audit sources are
    also cleared; NuGet then uses the package sources for audit. There is no
    public fallback, credential material or `defaultPushSource`.
@@ -271,24 +287,18 @@ Do not allow queue-time overrides of version or security variables.
    destination: the native publishing task still uses its separate approved
    external service connection.
 
-   **Anonymous access is not ready for a cold PR build.** The feed service index
-   returns HTTP 200, but package indexes for existing FAKE/Farmer/logger/fsdocs
-   dependencies return HTTP 401. For Azure.Identity and FSharp.Core the feed
-   explicitly reports no local versions and requires authentication to retrieve
-   unsaved upstream versions. Cold solution and FSI dependency resolution both
-   fail with NU1101; a warm-cache build succeeds. No upstream packages were
-   deliberately saved or feed permissions changed in this update.
-
-   **Concrete suitability blocker:** metadata lists only **PowerShell Gallery**
-   and **AdminTools@Local** upstreams, not a general .NET NuGet source. The current
-   feed does not supply the tested ASB/FAKE dependency closure. Authentication
-   alone cannot establish missing package availability. To reuse it, the feed
-   owners must approve .NET package coverage and pre-save the full existing
-   solution/FSI/tool closure for anonymous PR consumption. If broadening this
-   PowerShell feed is unsuitable, the proposed alternative is an owner-created
-   shared **OSS F# dependency-consumption feed** with approved .NET upstreams,
-   curated package saving and anonymous read access for PRs. No endpoint for that
-   uncreated feed is invented and no feed/upstream/permission is provisioned here.
+   **Cold restore now passes, not just cached builds.** Initial empty-cache
+   solution/FSI/tool restores used the already installed Microsoft credential
+   provider and existing authentication to save the current public dependency
+   closure through the approved upstream. No provider installer or manual token
+   export was used. Subsequent independent empty package/HTTP/resolution-cache
+   restores passed with authentication plugins disabled and credential environment
+   variables removed. Solution restore fetched **72 packages**; isolated FSI
+   resolution fetched **53 packages**, with no resolved assembly outside its new
+   cache. The existing `fsharp.formatting.commandtool` **9.0.4** manifest also
+   restored anonymously into a separate empty tool/package cache.
+   Unsaved package lookups returned **401 before curation**, then **200 after**:
+   this is a public saved-package feed, not anonymous upstream-saving permission.
 
    **Trusted authentication is wired, not exercised in ADO.** The official
    Build call enables `authenticateRestore`; the shared stage defaults it to
@@ -306,18 +316,23 @@ Do not allow queue-time overrides of version or security variables.
    identity support. Do not leave an unresolved macro or reuse the release
    publication connection. Grant build consumers only feed read access;
    upstream package saving must be done separately by an authorized feed curator.
-   Neither that connection/identity authorization nor authenticated cold restore
-   has been established here.
+   Local cold consumption with existing authentication was exercised; the ADO
+   task, connection/identity authorization and agent image were not. Upstream
+   saving requires [Collaborator or higher][upstream-sources]; do not broaden
+   PR permissions or give every consumer that role.
 
    **PR/fork flow stays unauthenticated.** No authentication task/restore
    connection is requested by the PR entrypoint. Resource permissions must deny
    it the trusted connection even if contributor YAML tries to enable the
    shared parameter. Never export trusted job tokens, PATs, Azure identities or
    credential-provider sessions to forks. Public saved packages can be read
-   anonymously; unavailable/unsaved dependencies fail closed. If the eventual
-   feed is private-only, cold fork restore is incompatible with this requirement
-   until owners supply an approved anonymous-readable consumption path.
-   Prewarmed caches alone do not resolve that conflict. Release does not run
+   anonymously; unavailable/unsaved dependencies fail closed. Dependency changes
+   need trusted curation before a cold fork build. Microsoft's current
+   [public-feed lifecycle guidance][public-feeds] says existing public projects
+   convert to private starting in **2027**; anonymous feed access then ends.
+   Owners must provide an approved anonymous-readable consumption path before
+   that transition, or leave fork builds blocked. Never solve it by sending
+   credentials to forks or falling back to NuGet.org. Release does not run
    dependency authentication or restore: it still requires the preseeded closure
    and restricted egress, with publication credentials owned by the native task.
 
@@ -327,9 +342,10 @@ Do not allow queue-time overrides of version or security variables.
    must establish approved internal audit/CG coverage; no public audit fallback
    or audit-disable switch is added.
 
-   **F# script runtime on every image, including checkout-free release:** provision
-   the `build.fsx` NuGet references and their transitive dependencies into the
-   executing account's cache from an approved source before enabling jobs.
+   **F# script runtime, especially checkout-free release:** build/PR images can
+   restore the curated closure from the configured feed. Release images must
+   preseed the `build.fsx` NuGet references and their transitive dependencies into
+   the executing account's cache from that source before enabling release jobs.
    These are the existing FAKE, Farmer, Microsoft.Extensions.Configuration and
    StructuredLogger dependencies, not new application dependencies. Their current
    resolved versions are now explicit: FAKE **6.2.0**, Farmer **1.9.36**,
@@ -345,8 +361,9 @@ Do not allow queue-time overrides of version or security variables.
    config is included with `build.fsx`, `global.json` and release notes in the
    checkout-free drop. FSI's resolution cache can reuse earlier absolute package
    paths, so successful cached introspection is not proof of feed access.
-   A bare SDK image is not sufficient. Do not grant feed credentials to PR jobs
-   or add public fallback installers/downloads to make resolution pass.
+   A bare SDK image without feed access or caches is not sufficient. Do not grant
+   feed credentials to PR jobs or add public fallback installers/downloads to
+   make resolution pass.
    Prefer prewarmed images and
    restrict release network access to approved publishing/compliance endpoints,
    with dependency acquisition disabled during release (prewarm the complete
@@ -410,26 +427,52 @@ Do not allow queue-time overrides of version or security variables.
    not that ADO can build without its own restricted job token.
    All PRs, including same-repository PRs, stay unofficial; trusted tests run
    only on master. Do not switch to `pull_request_target`.
-9. **Signing and governed outputs — missing implementation and policy decision.** Extending the
-   official template is **not** a signing implementation. The trusted YAML
-   explicitly enables breaking code-sign validation; it does not supply an ESRP
-   connection, certificate, tenant/client ID, signing operation or exemption.
-   Expect unsigned outputs to fail applicable policy. Keep trusted publication
-   disabled until the owning team establishes the required binary/package
-   signing policy and implements the approved 1ES signing integration. This is
-   a repository-side signing gap blocked on that decision, **not merely an
-   administrator resource-name setting**. Do not disable
-   signing checks, reclassify production output as non-production, or bypass SDL
-   to make a run green.
+9. **Signing — exact missing policy and repository integration.** The WI requires
+   FIC removal/ADO migration; it has no signing requirement or acceptance policy.
+   The [1ES code-sign guidance][code-sign-guidance] requires signed shipped
+   binaries/scripts, while the [NuGet output implementation][nuget-output] does
+   not choose this library's signer or require a particular NuGet author signature.
+   The trusted YAML retains breaking code-sign validation. Validation is not a
+   signer: local `Get-AuthenticodeSignature` reports **NotSigned** for both
+   first-party DLLs, and `dotnet nuget verify --all` reports **NU3004** for the
+   locally built unsigned nupkg.
 
-   Any required signing must finish **before** the immutable `drop` is published.
-   If assembly signing changes bytes, both the packaged library and compiled
-   tests must consume that same signed library; sign the package before the
-   artifact handoff too. This may require a separately reviewed build/signing
-   change, not merely supplying a service-connection name. Establish signed SBOM
-   generation/validation and official source-build provenance for the governed
-   release input as required by the approved template version. Do not sign,
-   repack, rebuild, or replace a package after Integration has tested its drop.
+   **Owner decision required:** supply the approved code-sign validation policy
+   and ESRP signing operation/profile for this OSS library, including the treatment
+   of first-party test binaries and copied third-party DLLs, and state whether
+   the **nupkg itself needs an author/repository signature in addition to binary
+   Authenticode signatures**. These are different signing contracts, not merely
+   missing resource names:
+
+   | Surface | Required integration boundary / missing policy |
+   |---|---|
+   | `DatatypeChannels.ASB.dll` in the package and `tests/` | Approved binary-signing operation/key/certificate policy; sign after `ci-build`, before `ci-package`, and copy the same signed DLL to the test output. |
+   | `DatatypeChannels.ASB.Tests.dll` and dependency DLLs in the governed test drop | Approved validation scope/third-party treatment (`policyFile`/targets if needed); do not blindly re-sign dependencies or invent exclusions. |
+   | `DatatypeChannels.ASB.<version>.nupkg` | Explicit decision whether package signing is required and its approved operation/profile; if required, sign after packing and before `ci-stage` seals its hash. |
+   | SBOM/source-build provenance | Platform onboarding and signed-SBOM validation for the production input; independent of DLL/package signatures. |
+
+   The supported current [1ES example][code-sign-sample] uses
+   **`EsrpCodeSigning@6` with WIF**, not a raw signer or installer.
+   [1ES.Signing.yml][deprecated-signing] explicitly deprecates its old task in
+   favor of v6. The v6 contract includes `ConnectedServiceName`,
+   `AppRegistrationClientId`, `AppRegistrationTenantId`, `AuthAKVName`,
+   `AuthCertName`, `AuthSignCertName`, `ServiceEndpointUrl`, `FolderPath`,
+   `Pattern` and `inlineOperation` with `signConfigType: inlineSignParams`.
+   The example's identities, key codes, certificate names and operations are not
+   this repository's authorization; none were copied. A connection alone cannot
+   select the missing policy. Once approved, repository work must expose those
+   native signing boundaries through the existing FAKE targets; the current
+   single `ci` invocation does **not** implement them.
+
+   Signer-independent support is implemented now: `sbom.enabled: true`,
+   **`validate: true`** and **`continueOnError: false`**. The inspected
+   [SBOM sample][sbom-sample] supports validation; the
+   [generation implementation][sbom-generation] propagates `continueOnError`
+   to task execution, so false fails closed despite a misleading editor-schema
+   description. No SBOM was generated/signed locally and ADO enforcement remains
+   untested. Keep production disabled pending signing policy, implementation and
+   live platform checks. Never sign, repack, rebuild or replace anything after
+   Integration, disable validation, or relabel production output to bypass it.
 
 Resources and branch policies are the security boundary, since PRs can modify
 scripts and YAML. Do not enable a connection or secret group until its checks
@@ -458,8 +501,9 @@ master on this public GitHub repository, leave release disabled.
 4. Replace the old GitHub required status check with the real Azure Pipelines
    check only after it has appeared successfully. Remove obsolete GitHub
    environment secrets and disable any old external pipeline definitions.
-   The obsolete Actions workflow, Actions-only Dependabot configuration and
-   README Actions badge are removed here. Add a real ADO badge only after the
+   The obsolete Actions workflow and README Actions badge are removed here.
+   `.github/dependabot.yml` is retained unchanged from master, per review.
+   Add a real ADO badge only after the
    pipeline identity is known.
 5. For a separately authorized release, queue **only the trusted definition**
    on protected `refs/heads/master` with `publishPackage: true`. Build packages
@@ -526,21 +570,43 @@ artifact and an inherited-source fixture, not just XML/string matching.
 Separate empty-package-cache solution restore and isolated uncached FSI
 dependency resolution failed with **NU1101** against PS-Consumption (plus the
 SDK's local library packs), with no public fallback. The FSI resolver generated
-only the PS-Consumption network source. Actual tool installation was not run;
-the manifest tool's anonymous package index returned 401. These limits prevent
-a claim of cold-build/feed readiness despite the passing cached CI graph.
+only the PS-Consumption network source. Tool restore was not exercised at that
+checkpoint. These were the PS-Consumption checkpoint's limits, superseded by the
+new-feed cold-restore evidence below.
 The earlier NU1902/OpenTelemetry.Api and NU1901/NuGet transitive advisory
 observations remain unresolved; the SDK/source change is not a CVE audit.
 After the authentication clarification, the ordering regression failed before
-wiring `NuGetAuthenticate@1`; the current contract suite has **209 checks**.
+wiring `NuGetAuthenticate@1`; that checkpoint's contract suite had **209 checks**.
 The full safe FAKE CI graph was rerun with all 209 checks and passed with existing
 caches. The authentication task itself has not run locally or in a live pipeline.
 
+The authorized shared-feed follow-up replaced PS-Consumption with the actual
+new OSS-FSharp-Consumption endpoint. Empty-cache normal SDK solution restore,
+isolated FSI dependency resolution and existing manifest-tool restore passed
+after upstream saving using existing native-provider authentication. Each was
+then repeated with independent empty caches, credential environment variables
+removed and `NUGET_NETCORE_PLUGIN_PATHS` set to an empty path list; the installed
+SDK's own `PluginDiscoverer` returned **0 authentication plugins**.
+All three anonymous restores passed. The FSI diagnostic used the installed SDK's
+dependency resolver with a fresh resolution cache, not the global FSI cache;
+all 52 resolved assembly paths were in its isolated package directory.
+
+The full normal `dotnet fsi build.fsx -t ci` graph then passed **211 checks**,
+restore, Release compilation, pack and staging using those populated solution
+caches with credential plugins disabled. This last build was not itself cold;
+the separate cold-restore probes are the feed-access evidence. Feed-selection
+and SBOM regressions failed before their respective changes. Real package SHA256
+and packaged/test DLL equality checks passed; the four staged tooling/config
+files exactly match the workspace. Neither live Azure tests nor publication ran.
+The tool restored was the existing `fsharp.formatting.commandtool` 9.0.4;
+its manifest/version was not changed and its command was not executed.
+
 YAML was parsed with cached YamlDotNet 16.3.0. Local schema/source
 inspection is not ADO template expansion, pool authorization, signing readiness
-or a successful integration/release run. No Azure tests, pipeline creation or
-queueing, permissions changes, provisioning, signing or package publication
-were performed for this update.
+or a successful integration/release run. Apart from the explicitly authorized
+consumption-feed creation and normal upstream caching, no resource provisioning,
+explicit permission changes, Azure tests, pipeline creation/queueing, signing or
+library package publication were performed.
 
 The unified script now compiles with its exact pinned build dependencies under
 10.0.403. Initial floating-reference resolution failed locally; existing
@@ -576,8 +642,9 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
   [validationBuild.yml](https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/validationBuild.yml),
   [previewBuild.yml](https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/previewBuild.yml),
   [shared preview stages](https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/templates/common-preview-build-stages.yml).
-  The dependency consumption feed is grounded in its
-  [NuGet config][management-nuget] and [feed variables][management-feed-vars].
+  The existing feed ownership context is grounded in its
+  [NuGet config][management-nuget] and [feed variables][management-feed-vars];
+  the authorized OSS F# feed was created separately in that same public project.
   Pipeline structure is inspiration only; no Management-specific credentials,
   installers, pools or connections were copied.
 - [1ES template documentation](https://aka.ms/1esptdocs) redirected to
@@ -592,7 +659,9 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
   entrypoints, pool/output/signing guidance, `v1/Steps/Outputs/pipelineArtifact.yml`,
   `v1/Core/Steps/Inputs/pipelineArtifact.yml`, `v1/Jobs/ReleaseJob.yml` and
   `v1/Steps/ReleaseSteps.yml`, `v1/Steps/UserProvidedReleaseSteps.yml`,
-  `v1/Steps/1ES.Signing.yml`, and `v1/Core/Steps/SBOM.Generation.Steps.yml`.
+  `v1/Steps/1ES.Signing.yml`, `Samples/CodeSignValidation.yml`,
+  `Samples/SBOMPipeline.yml`, `v1/Steps/SDLBinaryAnalysis.yml` and the SBOM
+  generation/validation step implementations.
   In particular, output/input declarations and the
   no-checkout release constraint were checked against implementation, not just
   Management examples. The YAML intentionally tracks the approved `release`
@@ -619,3 +688,12 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 [management-feed-vars]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/vars.yml
 [restore-auth-task]: https://github.com/microsoft/azure-pipelines-tasks/blob/3cdc037ed3702e99641e536ed7512b3f873b9d1d/Tasks/NuGetAuthenticateV1/task.json
 [consumption-metadata]: https://feeds.dev.azure.com/avs-oss/Public/_apis/packaging/feeds/PS-Consumption?api-version=7.1
+[oss-consumption-metadata]: https://feeds.dev.azure.com/avs-oss/Public/_apis/packaging/feeds/OSS-FSharp-Consumption?api-version=7.1
+[create-feed]: https://learn.microsoft.com/en-us/rest/api/azure/devops/artifacts/feed-management/create-feed?view=azure-devops-rest-7.1
+[upstream-sources]: https://learn.microsoft.com/en-us/azure/devops/artifacts/concepts/upstream-sources?view=azure-devops
+[public-feeds]: https://learn.microsoft.com/en-us/azure/devops/artifacts/concepts/feeds?view=azure-devops
+[code-sign-guidance]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/.agents/features/sdl-code-sign-validation.md&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[code-sign-sample]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/Samples/CodeSignValidation.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[deprecated-signing]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Steps/1ES.Signing.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[sbom-sample]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/Samples/SBOMPipeline.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[sbom-generation]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Core/Steps/SBOM.Generation.Steps.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2

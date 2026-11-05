@@ -44,6 +44,8 @@ extends:
         break: true
       sbom:
         enabled: true
+        validate: true
+        continueOnError: false
     stages:
     - template: /.pipelines/build.yml@self
       parameters:

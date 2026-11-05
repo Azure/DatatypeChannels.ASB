@@ -22,14 +22,14 @@ let rejects name action =
 let configPath = Path.Combine(Build.root, "NuGet.config")
 check "repository has explicit NuGet configuration" (File.Exists configPath)
 let consumptionFeed =
-    "https://pkgs.dev.azure.com/avs-oss/Public/_packaging/PS-Consumption/nuget/v3/index.json"
+    "https://pkgs.dev.azure.com/avs-oss/Public/_packaging/OSS-FSharp-Consumption/nuget/v3/index.json"
 let config = XDocument.Load configPath
 let sources = config.Root.Element(XName.Get "packageSources").Elements() |> Seq.toList
 check "NuGet clears inherited package sources first"
     (sources.Head.Name.LocalName = "clear")
 check "only the team consumption feed is configured"
     (sources.Length = 2 && sources[1].Name.LocalName = "add"
-     && sources[1].Attribute(XName.Get "key").Value = "PS-Consumption"
+     && sources[1].Attribute(XName.Get "key").Value = "OSS-FSharp-Consumption"
      && sources[1].Attribute(XName.Get "value").Value = consumptionFeed)
 check "NuGet does not inherit public audit sources"
     (config.Root.Element(XName.Get "auditSources").Elements()
@@ -464,6 +464,10 @@ check "manual release condition" (yaml.Contains("eq(variables['Build.Reason'], '
 check "release requires protected master" (release.Contains("eq(variables['Build.SourceBranch'], 'refs/heads/master')"))
 check "production branch validation is requested" (yaml.Contains("branchValidation: enforceInReleaseJobs"))
 check "SBOM generation is explicit" (yaml.Contains("sbom:\n        enabled: true"))
+check "SBOM validation is explicit"
+    (yaml.Contains("sbom:\n        enabled: true\n        validate: true"))
+check "SBOM generation fails closed"
+    (yaml.Contains("validate: true\n        continueOnError: false"))
 check "successful integration required" (yaml.Contains("eq(dependencies.Integration.result, 'Succeeded')"))
 check "no missing-test success" (yaml.Contains("failTaskOnMissingResultsFile: true"))
 check "release approval environment" (yaml.Contains("environment: DatatypeChannels-ASB-Release"))

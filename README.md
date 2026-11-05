@@ -18,9 +18,11 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 ## Building
 Pre-requisites:
 - .NET SDK matching `global.json` (10.0.403 with latest patch in that feature band)
-- Access to the team PS-Consumption feed in `NuGet.config` and preseeded F#
-  build dependencies. **Cold restore is blocked by missing .NET package
-  coverage in that feed**; authentication alone is not a fix. See the
+- Access to the shared `avs-oss/Public/OSS-FSharp-Consumption` feed in
+  `NuGet.config`. Empty-cache solution, FSI and existing tool-manifest restores
+  passed anonymously after authorized upstream caching. New dependency versions
+  must be saved by a trusted curator before credential-free PRs can consume them.
+  Release images still require preseeded F# build dependencies. See the
   [setup guide](docs/azure-pipelines.md#required-administrator-configuration).
 - Azure CLI only for explicitly requested local provisioning/integration
 
@@ -61,8 +63,9 @@ CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
 validation (`.pipelines/azure-pipelines-pr.yml`) and official trusted
 integration/package production (`.pipelines/azure-pipelines.yml`). They use
 preinstalled SDK tools, an existing namespace, and Azure Pipelines
-authentication. Signing implementation/policy and resource authorization remain
-unresolved; this draft is not ready to enable production.
+authentication. The signing scope/ESRP policy and resource authorization remain
+unresolved; this draft is not ready to enable production. The setup guide names
+the exact binary/package signing decisions and required build boundaries.
 Trusted Build and Integration authenticate dependency resolution with
 `NuGetAuthenticate@1` before FSI. PR/fork jobs do not receive that task or
 connection; their approved dependency closure must be anonymously readable.
