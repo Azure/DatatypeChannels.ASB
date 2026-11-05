@@ -351,6 +351,21 @@ let section (start: string) (finish: string) (text: string) =
 let release = section "      - stage: Release" "\n    - stage:" yaml
 let integration = section "    - stage: Integration" "\n    - ${{" yaml
 
+check "trusted build authenticates before FSI dependency resolution"
+    (yaml.Contains("authenticateRestore: true")
+     && buildYaml.Contains("- ${{ if eq(parameters.authenticateRestore, true) }}:\n      - task: NuGetAuthenticate@1")
+     && buildYaml.IndexOf("task: NuGetAuthenticate@1", StringComparison.Ordinal)
+        < buildYaml.IndexOf("dotnet fsi", StringComparison.Ordinal))
+check "integration authenticates before its first FSI invocation"
+    (integration.Contains("task: NuGetAuthenticate@1")
+     && integration.IndexOf("task: NuGetAuthenticate@1", StringComparison.Ordinal)
+        < integration.IndexOf("dotnet fsi", StringComparison.Ordinal))
+check "PR restore authentication defaults to off"
+    (not (prYaml.Contains("authenticateRestore:"))
+     && buildYaml.Contains("name: authenticateRestore\n  type: boolean\n  default: false"))
+check "release cannot authenticate dependency acquisition"
+    (not (release.Contains("NuGetAuthenticate@") || release.Contains("NUGET_RESTORE_SERVICE_CONNECTION")))
+
 check "official trusted template"
     (yaml.Contains("template: v1/1ES.Official.PipelineTemplate.yml@1esPipelines"))
 check "unofficial PR template"
@@ -471,8 +486,8 @@ check "local FAKE restore explicitly consumes repository config"
 check "no pipeline source override or FSI feed injection"
     (not (buildSource.Contains("NUGET_RESTORE_SOURCE") || combinedYaml.Contains("NUGET_RESTORE_SOURCE")
           || buildSource.Contains("\"--source\"") || buildSource.Contains("#i \"nuget:")))
-check "PR/shared build does not authenticate package restore"
-    (not (prYaml.Contains("NuGetAuthenticate@") || buildYaml.Contains("NuGetAuthenticate@")
+check "PR does not request feed credentials and shared logic exports no raw token"
+    (not (prYaml.Contains("NuGetAuthenticate@") || prYaml.Contains("NUGET_RESTORE_SERVICE_CONNECTION")
           || buildYaml.Contains("System.AccessToken")))
 check "no raw publisher or key lookup is hidden in the script"
     (not (buildSource.Contains("\"nuget\"; \"push\"") || buildSource.Contains("NUGET_REPO_KEY")))

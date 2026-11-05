@@ -445,7 +445,7 @@ Target.create "ci-package" (fun _ ->
 Target.description "Stage package, matching test binaries, hash and this entrypoint into the 1ES drop."
 Target.create "ci-stage" (fun _ -> Pipeline.stageArtifact (Pipeline.artifactDirectory ()))
 
-Target.description "Credential-free build/check/package graph; no Azure tests or publication."
+Target.description "Build/check/package graph without Azure or publication credentials."
 Target.create "ci" ignore
 
 Target.description "Require trusted master and ancestry on master before Azure login."

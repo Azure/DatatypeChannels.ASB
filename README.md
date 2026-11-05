@@ -19,8 +19,8 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 Pre-requisites:
 - .NET SDK matching `global.json` (10.0.403 with latest patch in that feature band)
 - Access to the team PS-Consumption feed in `NuGet.config` and preseeded F#
-  build dependencies. **Cold restore is currently blocked by unsaved upstream
-  packages**; cached builds do not prove feed readiness. See the
+  build dependencies. **Cold restore is blocked by missing .NET package
+  coverage in that feed**; authentication alone is not a fix. See the
   [setup guide](docs/azure-pipelines.md#required-administrator-configuration).
 - Azure CLI only for explicitly requested local provisioning/integration
 
@@ -63,6 +63,9 @@ integration/package production (`.pipelines/azure-pipelines.yml`). They use
 preinstalled SDK tools, an existing namespace, and Azure Pipelines
 authentication. Signing implementation/policy and resource authorization remain
 unresolved; this draft is not ready to enable production.
+Trusted Build and Integration authenticate dependency resolution with
+`NuGetAuthenticate@1` before FSI. PR/fork jobs do not receive that task or
+connection; their approved dependency closure must be anonymously readable.
 Both invoke `build.fsx -t ci` through the shared YAML stage; trusted jobs use
 `check-trust`, `integration`, and `publish`.
 Release is an explicitly opted-in manual master run, not a Git tag trigger.

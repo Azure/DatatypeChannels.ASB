@@ -52,6 +52,7 @@ extends:
               eq(variables['Build.Repository.Name'], 'Azure/DatatypeChannels.ASB'),
               in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
               eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+        authenticateRestore: true
 
     - stage: Integration
       dependsOn: Build
@@ -71,6 +72,10 @@ extends:
           fetchDepth: 0
           fetchTags: true
           persistCredentials: false
+        - task: NuGetAuthenticate@1
+          displayName: Authenticate trusted script dependencies before FSI
+          inputs:
+            nuGetServiceConnections: $(NUGET_RESTORE_SERVICE_CONNECTION)
         - pwsh: |
             dotnet fsi build.fsx -t check-trust
             exit $LASTEXITCODE

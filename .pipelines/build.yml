@@ -3,6 +3,9 @@ parameters:
 - name: condition
   type: string
   default: succeeded()
+- name: authenticateRestore
+  type: boolean
+  default: false
 
 stages:
 - stage: Build
@@ -21,12 +24,17 @@ stages:
     - checkout: self
       clean: true
       persistCredentials: false
+    - ${{ if eq(parameters.authenticateRestore, true) }}:
+      - task: NuGetAuthenticate@1
+        displayName: Authenticate trusted dependency restore before FSI
+        inputs:
+          nuGetServiceConnections: $(NUGET_RESTORE_SERVICE_CONNECTION)
     - pwsh: |
         dotnet --version
         if ($LASTEXITCODE -ne 0) { throw 'Preinstall the SDK required by global.json. No SDK is downloaded.' }
         dotnet fsi build.fsx -t ci
         exit $LASTEXITCODE
-      displayName: Run credential-free build, check and package target graph
+      displayName: Run build, check and package target graph
       env:
         ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
         CHECK_DIRECTORY: $(Agent.TempDirectory)/pipeline-contracts

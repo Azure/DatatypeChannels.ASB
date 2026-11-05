@@ -22,7 +22,7 @@ work-item project authorizes public-repository builds.
 
 Both use the Azure Repos resource alias `1esPipelines`, repository
 `1ESPipelineTemplates/1ESPipelineTemplates`, and `refs/tags/release`. Their stages
-are under `extends.parameters.stages`. Only the credential-free build stage in
+are under `extends.parameters.stages`. Only the build stage in
 `.pipelines/build.yml` is shared. Select the entrypoint paths above when creating
 or updating the ADO definitions; all pipeline YAML lives under `.pipelines`.
 Do not authorize the PR definition for the trusted pool, integration connection,
@@ -252,7 +252,11 @@ Do not allow queue-time overrides of version or security variables.
    `https://pkgs.dev.azure.com/avs-oss/Public/_packaging/PS-Consumption/nuget/v3/index.json`.
    This is the consumption feed in public Management's
    [NuGet configuration][management-nuget] and [team variables][management-feed-vars]
-   at commit `f8642c4a1c97ca68f4f23032b7b25cee6975e864`, not an invented feed.
+   at commit `f8642c4a1c97ca68f4f23032b7b25cee6975e864`, explicitly approved for
+   reuse. [Read-only feed metadata][consumption-metadata] confirms organization **avs-oss**, project
+   **Public** (`c12681cb-56b3-4846-8768-fb04c70b5507`, visibility Public), feed
+   **PS-Consumption** (`a4662fd6-dbb1-485a-8a7e-e8254d11f6da`). This is not a
+   private feed simply because an unsaved upstream lookup returns 401.
    `<clear />` removes inherited package sources. Inherited audit sources are
    also cleared; NuGet then uses the package sources for audit. There is no
    public fallback, credential material or `defaultPushSource`.
@@ -275,17 +279,47 @@ Do not allow queue-time overrides of version or security variables.
    fail with NU1101; a warm-cache build succeeds. No upstream packages were
    deliberately saved or feed permissions changed in this update.
 
-   **Owner decision required:** pre-save the entire existing solution, FSI and
-   tool dependency closure to this feed and establish anonymous read access for
-   isolated PR agents, or identify another approved internal feed that supports
-   that access. Prewarmed caches alone do not prove reproducible cold restore.
-   Never export a trusted job token, PAT, Azure identity or credential-provider
-   session to PR/fork jobs. Trusted image preparation may use an approved
-   preinstalled Azure Artifacts credential provider with an authorized identity;
-   upstream saving requires the corresponding feed permission. Management's
-   `NuGetAuthenticate@1` usage is prior art, not authorization for this repository.
-   The supported trusted identity/connection and image authentication setup have
-   **not** been established here; no runtime provider installer is added.
+   **Concrete suitability blocker:** metadata lists only **PowerShell Gallery**
+   and **AdminTools@Local** upstreams, not a general .NET NuGet source. The current
+   feed does not supply the tested ASB/FAKE dependency closure. Authentication
+   alone cannot establish missing package availability. To reuse it, the feed
+   owners must approve .NET package coverage and pre-save the full existing
+   solution/FSI/tool closure for anonymous PR consumption. If broadening this
+   PowerShell feed is unsuitable, the proposed alternative is an owner-created
+   shared **OSS F# dependency-consumption feed** with approved .NET upstreams,
+   curated package saving and anonymous read access for PRs. No endpoint for that
+   uncreated feed is invented and no feed/upstream/permission is provisioned here.
+
+   **Trusted authentication is wired, not exercised in ADO.** The official
+   Build call enables `authenticateRestore`; the shared stage defaults it to
+   false for the unofficial PR call. `NuGetAuthenticate@1` runs after checkout
+   and **before the first FSI invocation** in trusted Build and Integration,
+   covering `#r "nuget: ..."` as well as later solution restore. This uses the
+   [supported platform task][restore-auth-task], not raw token extraction or a homemade installer.
+   Its default preserves an already installed credential provider; approved
+   images/task acquisition policy must cover first-time provider setup.
+
+   Set nonsecret `NUGET_RESTORE_SERVICE_CONNECTION` on the **official definition
+   only** to an existing authorized external NuGet connection targeting the
+   exact configured feed when the pipeline is outside `avs-oss`. For a pipeline
+   in `avs-oss`, explicitly set it empty to use the task's same-organization job
+   identity support. Do not leave an unresolved macro or reuse the release
+   publication connection. Grant build consumers only feed read access;
+   upstream package saving must be done separately by an authorized feed curator.
+   Neither that connection/identity authorization nor authenticated cold restore
+   has been established here.
+
+   **PR/fork flow stays unauthenticated.** No authentication task/restore
+   connection is requested by the PR entrypoint. Resource permissions must deny
+   it the trusted connection even if contributor YAML tries to enable the
+   shared parameter. Never export trusted job tokens, PATs, Azure identities or
+   credential-provider sessions to forks. Public saved packages can be read
+   anonymously; unavailable/unsaved dependencies fail closed. If the eventual
+   feed is private-only, cold fork restore is incompatible with this requirement
+   until owners supply an approved anonymous-readable consumption path.
+   Prewarmed caches alone do not resolve that conflict. Release does not run
+   dependency authentication or restore: it still requires the preseeded closure
+   and restricted egress, with publication credentials owned by the native task.
 
    This feed does not advertise a `VulnerabilityInfo` resource. Absence of
    advisory warnings after changing sources is not evidence that the earlier
@@ -497,6 +531,10 @@ the manifest tool's anonymous package index returned 401. These limits prevent
 a claim of cold-build/feed readiness despite the passing cached CI graph.
 The earlier NU1902/OpenTelemetry.Api and NU1901/NuGet transitive advisory
 observations remain unresolved; the SDK/source change is not a CVE audit.
+After the authentication clarification, the ordering regression failed before
+wiring `NuGetAuthenticate@1`; the current contract suite has **209 checks**.
+The full safe FAKE CI graph was rerun with all 209 checks and passed with existing
+caches. The authentication task itself has not run locally or in a live pipeline.
 
 YAML was parsed with cached YamlDotNet 16.3.0. Local schema/source
 inspection is not ADO template expansion, pool authorization, signing readiness
@@ -514,7 +552,10 @@ these require normal dependency/security review, not disabling pipeline scans.
 Local checks against the inspected 1ES editor schema covered template names,
 pool/source-analysis objects, governed output, release input/context, SDL
 configuration and the selected release-stage shape. The unofficial entrypoint
-and shared stage also passed local editor-schema checks. This schema mixes
+also passed local editor-schema checks. Both selected shared Build shapes
+(authentication enabled/disabled) are checked separately: the editor's step
+schema has no compile-time conditional arm, so validation of the whole new
+conditional shared template is not claimed. This schema mixes
 scalar-string ADO fields with JSON-boolean 1ES/task fields, so a plain YAML-to-JSON
 `Test-Json` call is not a full pipeline validator. In addition, its AzureCLI@2
 input list omits the existing `visibleAzLogin` option, and its PublishTestResults@2
@@ -576,3 +617,5 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 [management-preview]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/templates/common-preview-build-stages.yml
 [management-nuget]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/nuget.config
 [management-feed-vars]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/vars.yml
+[restore-auth-task]: https://github.com/microsoft/azure-pipelines-tasks/blob/3cdc037ed3702e99641e536ed7512b3f873b9d1d/Tasks/NuGetAuthenticateV1/task.json
+[consumption-metadata]: https://feeds.dev.azure.com/avs-oss/Public/_apis/packaging/feeds/PS-Consumption?api-version=7.1
