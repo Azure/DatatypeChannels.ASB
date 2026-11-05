@@ -17,7 +17,7 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 
 ## Building
 Pre-requisites:
-- .NET SDK matching `global.json` (10.0.201 with latest patch in that feature band)
+- .NET SDK matching `global.json` (10.0.403 with latest patch in that feature band)
 - Existing F# build dependencies from an approved NuGet source/cache (see the
   [setup guide](docs/azure-pipelines.md#required-administrator-configuration))
 - Azure CLI only for explicitly requested local provisioning/integration

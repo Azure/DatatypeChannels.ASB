@@ -236,9 +236,10 @@ Do not allow queue-time overrides of version or security variables.
    The trusted pool serves build, integration and release; source-analysis
    pools must meet the same trust boundary as their owning definition.
    Agents need preinstalled Git, PowerShell 7,
-   the SDK selected by `global.json`, and the .NET 10 runtime; trusted agents also
-   need Azure CLI. `latestPatch` does not accept a later feature band. Missing
-   tools fail rather than downloading repository-provided installers. Review
+   the SDK selected by `global.json` (**10.0.403/latestPatch**), and the .NET 10
+   runtime; trusted agents also need Azure CLI. `latestPatch` does not accept a
+   later feature band. Missing tools fail rather than downloading
+   repository-provided installers. Review
    1ES's injected compliance tasks/tool acquisition separately with the template
    owners and approve their feeds/network access. Use clean, ephemeral agents,
    isolated between untrusted builds and trusted tests/releases. Workspace
@@ -262,7 +263,8 @@ Do not allow queue-time overrides of version or security variables.
    The former explicit logger version 2.2.243 was unavailable and caused
    NU1603; 2.2.291 was the resolver's existing fallback. Pinning the formerly
    floating references also avoids selecting different tools at release time.
-   `Directory.Packages.props`, the SDK pin and application dependencies are unchanged.
+   `Directory.Packages.props` and application dependencies are unchanged. The SDK
+   is now pinned to **10.0.403** with the existing `latestPatch` policy.
 
    FSI resolves `#r "nuget: ..."` **before** target execution, including help.
    `NUGET_RESTORE_SOURCE` controls solution restore, not FSI's resolver; configure
@@ -419,9 +421,20 @@ or validate configured permissions. `dotnet test` is **not** an offline check:
 the existing test assembly contacts Azure during discovery. Do not run it
 without explicit permission to create test messaging entities.
 
-The follow-up was checked locally using the installed **10.0.403** SDK/F# FSI.
-The required **10.0.201/latestPatch** SDK was unavailable and `global.json` was
-not weakened. YAML was parsed with cached YamlDotNet 16.3.0. Local schema/source
+Earlier migration checks used the installed **10.0.403** FSI directly because
+the then-required **10.0.201/latestPatch** SDK was unavailable. The requested SDK
+is now **10.0.403/latestPatch** in `global.json`; the roll-forward and prerelease
+policies are unchanged.
+
+For the SDK update, `dotnet --version` from the workspace selected **10.0.403**.
+Using normal SDK selection, `dotnet fsi build.fsx -t check` passed **191 checks**,
+and `dotnet fsi build.fsx -t ci-build --single-target` compiled the Release
+library and integration binaries without restoring or running Azure tests.
+The build still reported NU1902 for OpenTelemetry.Api 1.15.2; this SDK change
+does not update application dependencies. No dependency restore or tool
+installation was needed. These checks do not prove the full configured CI graph.
+
+YAML was parsed with cached YamlDotNet 16.3.0. Local schema/source
 inspection is not ADO template expansion, pool authorization, signing readiness
 or a successful integration/release run. No Azure tests, pipeline creation or
 queueing, permissions changes, provisioning, signing or package publication
