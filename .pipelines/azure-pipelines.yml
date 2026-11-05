@@ -28,6 +28,7 @@ extends:
   parameters:
     featureFlags:
       branchValidation: enforceInReleaseJobs
+      sbomValidatorIgnoreMissing: false
     pool:
       name: $(TRUSTED_POOL_NAME)
       image: $(TRUSTED_POOL_IMAGE)

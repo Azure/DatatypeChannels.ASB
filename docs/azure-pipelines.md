@@ -474,6 +474,21 @@ Do not allow queue-time overrides of version or security variables.
    live platform checks. Never sign, repack, rebuild or replace anything after
    Integration, disable validation, or relabel production output to bypass it.
 
+   **Production input inventory must also fail closed.** Generation's
+   `continueOnError: false` does not enforce manifest completeness at release.
+   The official `extends.parameters.featureFlags` therefore explicitly sets
+   **`sbomValidatorIgnoreMissing: false`**. At the inspected release revision,
+   [ReleaseSteps.yml][release-steps] passes `sbomValidationStrict: false`;
+   [Inputs.yml][inputs] otherwise enables an advisory post-validation step.
+   The explicit false flag selects `SbomValidationFailureEventAction: fail`
+   in both toolkit and legacy paths of [SBOM.Validation.Steps.yml][sbom-validation],
+   and excludes that advisory step. The production pipeline-artifact input still
+   sets `continueOnError: false` and `validateSignature: true`; neither is weakened.
+   Omitting the flag or setting it true instead selects ignore-missing behavior.
+   The [post-validation helper][post-sbom-validation] explicitly recommends false;
+   its unchanged one-error handler otherwise emits a warning and succeeds.
+   This inventory policy does not supply or replace the missing signing policy.
+
 Resources and branch policies are the security boundary, since PRs can modify
 scripts and YAML. Do not enable a connection or secret group until its checks
 are in place. If the organization's checks cannot safely authorize protected
@@ -493,6 +508,14 @@ master on this public GitHub repository, leave release disabled.
    checks, current-run artifact paths and deployment-job/environment handling.
    Confirm fork PR, same-repo PR, master, manual opted-in master, rejected tag and manual feature
    cases. Schema/editor checks are not equivalent to this expansion.
+   **Authorized negative SBOM inventory check:** in a controlled nonpublishing
+   validation run, use a test artifact whose signed SBOM is valid but omits an
+   extra file. Require production-input validation to fail the job before the
+   publisher can execute (not merely emit a warning or succeed with issues).
+   Confirm strict settings for the validator implementation actually selected
+   by the organization, signature validation remains enabled, and a complete
+   signed control artifact passes. Do not mutate a tested production drop.
+   This requires separate authorization and has not been run locally or in ADO.
 3. After normal PR review/merge and signing setup, run unofficial validation, then a trusted
    master integration build. Confirm a nonempty passing TRX and inspect the
    package metadata, version and artifact. Test approval rejection/cancellation
@@ -601,6 +624,25 @@ files exactly match the workspace. Neither live Azure tests nor publication ran.
 The tool restored was the existing `fsharp.formatting.commandtool` 9.0.4;
 its manifest/version was not changed and its command was not executed.
 
+The focused SBOM review follow-up reproduced the permissive production-input
+selection before the fix. Executing only the inspected helper's unchanged
+error-handling functions in memory with a failed, one-error result produced
+**WARNING → Succeeded**. Selected upstream expressions for both validator
+implementations gave: unset/true → ignore-missing plus advisory post-step;
+false → failure action plus no advisory post-step. The repository selection
+failed before the new flag and passed afterward; normal
+`dotnet fsi build.fsx -t check` passed **215 checks**, including unset/false/true
+policy guards. These are source-expression/error-handler tests, **not an actual
+DropValidator/toolkit execution or ADO template expansion**.
+
+The inspected editor schema's `featureFlags` whitelist omits
+`sbomValidatorIgnoreMissing` and rejects it as an additional property.
+This is an explicit schema limitation, not a passing whole-document check:
+the runtime templates accept/pass the object, consume this boolean and the
+upstream helper recommends this exact setting. Keep the strict flag and
+confirm current schema/template compatibility during authorized ADO expansion;
+do not remove it merely to satisfy the editor.
+
 YAML was parsed with cached YamlDotNet 16.3.0. Local schema/source
 inspection is not ADO template expansion, pool authorization, signing readiness
 or a successful integration/release run. Apart from the explicitly authorized
@@ -697,3 +739,6 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 [deprecated-signing]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Steps/1ES.Signing.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
 [sbom-sample]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/Samples/SBOMPipeline.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
 [sbom-generation]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Core/Steps/SBOM.Generation.Steps.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[inputs]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Steps/Inputs.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[sbom-validation]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/v1/Core/Steps/SBOM.Validation.Steps.yml&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
+[post-sbom-validation]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/scripts/post_sbom_validation.py&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2

@@ -468,6 +468,20 @@ check "SBOM validation is explicit"
     (yaml.Contains("sbom:\n        enabled: true\n        validate: true"))
 check "SBOM generation fails closed"
     (yaml.Contains("validate: true\n        continueOnError: false"))
+// 1ES release 77ca3ebb: only explicit false rejects missing inventory; omission/true are advisory.
+let strictSbomInventory text =
+    let flags = section "    featureFlags:" "\n    pool:" text
+    flags.Split('\n') |> Array.contains "      sbomValidatorIgnoreMissing: false"
+let sbomFlagFixture value =
+    "    featureFlags:\n" + value + "    pool:\n"
+check "unset SBOM inventory flag does not satisfy release policy"
+    (not (strictSbomInventory (sbomFlagFixture "")))
+check "ignore-missing true does not satisfy release policy"
+    (not (strictSbomInventory (sbomFlagFixture "      sbomValidatorIgnoreMissing: true\n")))
+check "ignore-missing false satisfies release policy"
+    (strictSbomInventory (sbomFlagFixture "      sbomValidatorIgnoreMissing: false\n"))
+check "production input explicitly selects strict SBOM inventory validation"
+    (strictSbomInventory yaml)
 check "successful integration required" (yaml.Contains("eq(dependencies.Integration.result, 'Succeeded')"))
 check "no missing-test success" (yaml.Contains("failTaskOnMissingResultsFile: true"))
 check "release approval environment" (yaml.Contains("environment: DatatypeChannels-ASB-Release"))
