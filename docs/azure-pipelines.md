@@ -72,7 +72,7 @@ dotnet. No duplicate-skip option hides publication errors. Repeating a
 successful publish will fail on an immutable feed, so inspect the existing
 package before retrying. Failed or skipped integration cannot authorize release.
 1ES release jobs cannot check out source. The build therefore includes only
-`build.fsx`, `RELEASE_NOTES.md`, `global.json`, and `package.sha256`
+`build.fsx`, `RELEASE_NOTES.md`, `global.json`, `NuGet.config`, and `package.sha256`
 alongside the package/tests. Publication runs the same entrypoint **from the drop**,
 retaining SDK selection and version validation without fetching or rebuilding.
 The image must already contain the script's pinned FAKE/Farmer/configuration
@@ -158,7 +158,7 @@ execute any inspected target bodies. The `graph` target calls FAKE's own graph
 printer; it has no build dependencies.
 
 ```powershell
-dotnet fsi build.fsx --help
+dotnet fsi build.fsx -- --help
 dotnet fsi build.fsx --list
 dotnet fsi build.fsx -t graph ci integration publish test
 dotnet fsi build.fsx --write-info "$env:TEMP/asb-targets.json"
@@ -177,13 +177,14 @@ dotnet fsi build.fsx --write-info "$env:TEMP/asb-targets.json"
 | Local `init` | Explicit developer provisioning only; never a dependency of CI or introspection |
 
 For `ci`, set `ARTIFACT_DIRECTORY`, `CHECK_DIRECTORY`, `BUILD_BUILDID`,
-`PACKAGE_PATCH_OFFSET` and `NUGET_RESTORE_SOURCE`; YAML provides these through
+`PACKAGE_PATCH_OFFSET`; YAML provides these through
 definition variables, built-in variables and step environment mappings.
 Integration and publication select the same run's drop with `ARTIFACT_DIRECTORY`.
 Privileged target bodies repeat their authorization guards because FAKE permits
 `--single-target`; skipping dependency execution must not bypass those guards.
 As before, local documentation needs the existing `fsdocs` tool manifest restored
-from an approved source; no installer was added to pipeline targets.
+using `dotnet tool restore --configfile NuGet.config` after feed access is
+established. No tool restore or installer was added to pipeline targets.
 
 ### Versions and metadata
 
@@ -246,12 +247,51 @@ Do not allow queue-time overrides of version or security variables.
    cleanup alone is not machine isolation. Do not give PR agents managed
    identities, persistent Azure/CLI sessions, secrets, or access to the trusted
    pool, including through automatic 1ES source-analysis jobs.
-3. **Restore source.** Set the nonsecret pipeline variable
-   `NUGET_RESTORE_SOURCE` to the approved HTTPS NuGet v3 feed that supplies the
-   existing versions in `Directory.Packages.props` and implicit SDK packages.
-   The build passes that source explicitly; it must work without exposing
-   private feed credentials to PR jobs. Configure approved network access.
-   No package sources, feeds or tool installers are provisioned by this YAML.
+3. **Internal-only restore source and current access blocker.** Repository
+   `NuGet.config` selects only
+   `https://pkgs.dev.azure.com/avs-oss/Public/_packaging/PS-Consumption/nuget/v3/index.json`.
+   This is the consumption feed in public Management's
+   [NuGet configuration][management-nuget] and [team variables][management-feed-vars]
+   at commit `f8642c4a1c97ca68f4f23032b7b25cee6975e864`, not an invented feed.
+   `<clear />` removes inherited package sources. Inherited audit sources are
+   also cleared; NuGet then uses the package sources for audit. There is no
+   public fallback, credential material or `defaultPushSource`.
+
+   Normal `dotnet restore/build/test/pack`, local tool restore and FSI source
+   discovery use this configuration. Local FAKE `restore` and `ci-restore`
+   explicitly pass its path. The old arbitrary `NUGET_RESTORE_SOURCE` override
+   and YAML mapping are removed. Do not add `--source`, `--add-source` or FSI
+   `#i "nuget: ..."` overrides to bypass it. The SDK's on-disk FSharp
+   `library-packs` source may also appear in restore metadata; it is not a
+   network feed. Dependency restore does **not** select the publication
+   destination: the native publishing task still uses its separate approved
+   external service connection.
+
+   **Anonymous access is not ready for a cold PR build.** The feed service index
+   returns HTTP 200, but package indexes for existing FAKE/Farmer/logger/fsdocs
+   dependencies return HTTP 401. For Azure.Identity and FSharp.Core the feed
+   explicitly reports no local versions and requires authentication to retrieve
+   unsaved upstream versions. Cold solution and FSI dependency resolution both
+   fail with NU1101; a warm-cache build succeeds. No upstream packages were
+   deliberately saved or feed permissions changed in this update.
+
+   **Owner decision required:** pre-save the entire existing solution, FSI and
+   tool dependency closure to this feed and establish anonymous read access for
+   isolated PR agents, or identify another approved internal feed that supports
+   that access. Prewarmed caches alone do not prove reproducible cold restore.
+   Never export a trusted job token, PAT, Azure identity or credential-provider
+   session to PR/fork jobs. Trusted image preparation may use an approved
+   preinstalled Azure Artifacts credential provider with an authorized identity;
+   upstream saving requires the corresponding feed permission. Management's
+   `NuGetAuthenticate@1` usage is prior art, not authorization for this repository.
+   The supported trusted identity/connection and image authentication setup have
+   **not** been established here; no runtime provider installer is added.
+
+   This feed does not advertise a `VulnerabilityInfo` resource. Absence of
+   advisory warnings after changing sources is not evidence that the earlier
+   advisories are resolved or that vulnerability scanning is covered. Owners
+   must establish approved internal audit/CG coverage; no public audit fallback
+   or audit-disable switch is added.
 
    **F# script runtime on every image, including checkout-free release:** provision
    the `build.fsx` NuGet references and their transitive dependencies into the
@@ -267,10 +307,13 @@ Do not allow queue-time overrides of version or security variables.
    is now pinned to **10.0.403** with the existing `latestPatch` policy.
 
    FSI resolves `#r "nuget: ..."` **before** target execution, including help.
-   `NUGET_RESTORE_SOURCE` controls solution restore, not FSI's resolver; configure
-   the image's approved NuGet sources/cache separately. A bare SDK image is not
-   sufficient. Do not grant feed credentials to PR jobs or add public fallback
-   installers/downloads to make resolution pass. Prefer prewarmed images and
+   Its source discovery uses the script directory's `NuGet.config`; the exact
+   config is included with `build.fsx`, `global.json` and release notes in the
+   checkout-free drop. FSI's resolution cache can reuse earlier absolute package
+   paths, so successful cached introspection is not proof of feed access.
+   A bare SDK image is not sufficient. Do not grant feed credentials to PR jobs
+   or add public fallback installers/downloads to make resolution pass.
+   Prefer prewarmed images and
    restrict release network access to approved publishing/compliance endpoints,
    with dependency acquisition disabled during release (prewarm the complete
    closure rather than enabling a restore fallback). Missing script
@@ -333,13 +376,15 @@ Do not allow queue-time overrides of version or security variables.
    not that ADO can build without its own restricted job token.
    All PRs, including same-repository PRs, stay unofficial; trusted tests run
    only on master. Do not switch to `pull_request_target`.
-9. **Signing and governed outputs — unresolved prerequisite.** Extending the
+9. **Signing and governed outputs — missing implementation and policy decision.** Extending the
    official template is **not** a signing implementation. The trusted YAML
    explicitly enables breaking code-sign validation; it does not supply an ESRP
    connection, certificate, tenant/client ID, signing operation or exemption.
    Expect unsigned outputs to fail applicable policy. Keep trusted publication
    disabled until the owning team establishes the required binary/package
-   signing policy and the approved 1ES signing integration. Do not disable
+   signing policy and implements the approved 1ES signing integration. This is
+   a repository-side signing gap blocked on that decision, **not merely an
+   administrator resource-name setting**. Do not disable
    signing checks, reclassify production output as non-production, or bypass SDL
    to make a run green.
 
@@ -414,7 +459,8 @@ Tests load the **actual** build script to inspect its helpers, then
 execute the exact artifact-hosted entrypoint (not a stripped copy) for help,
 listing, graph export and denial paths. FAKE's machine-readable dependency
 export is checked for exact credential-free, integration and no-rebuild publish
-closures. Introspection is tested with release notes/configuration absent.
+closures. Introspection is tested with release notes/application settings absent;
+the dependency configuration remains present.
 Package/hash/library mismatch and `--single-target` guard regressions are included.
 Fixtures are removed from the supplied scratch directory. They do not execute Azure YAML
 or validate configured permissions. `dotnet test` is **not** an offline check:
@@ -432,7 +478,25 @@ and `dotnet fsi build.fsx -t ci-build --single-target` compiled the Release
 library and integration binaries without restoring or running Azure tests.
 The build still reported NU1902 for OpenTelemetry.Api 1.15.2; this SDK change
 does not update application dependencies. No dependency restore or tool
-installation was needed. These checks do not prove the full configured CI graph.
+installation was needed at that SDK-only checkpoint.
+
+The subsequent source-configuration/completeness pass ran the full safe
+`dotnet fsi build.fsx -t ci` graph with the normally selected SDK and existing
+caches: **205 contract checks**, preflight, metadata, restore, Release build,
+pack and artifact staging passed. No Azure integration or native publishing
+task ran. Packaging still warns about the deprecated icon URL and missing readme.
+The config regression first failed because `NuGet.config` was absent. Effective
+source probes now cover the repository, test-script directory, checkout-free
+artifact and an inherited-source fixture, not just XML/string matching.
+
+Separate empty-package-cache solution restore and isolated uncached FSI
+dependency resolution failed with **NU1101** against PS-Consumption (plus the
+SDK's local library packs), with no public fallback. The FSI resolver generated
+only the PS-Consumption network source. Actual tool installation was not run;
+the manifest tool's anonymous package index returned 401. These limits prevent
+a claim of cold-build/feed readiness despite the passing cached CI graph.
+The earlier NU1902/OpenTelemetry.Api and NU1901/NuGet transitive advisory
+observations remain unresolved; the SDK/source change is not a CVE audit.
 
 YAML was parsed with cached YamlDotNet 16.3.0. Local schema/source
 inspection is not ADO template expansion, pool authorization, signing readiness
@@ -471,7 +535,9 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
   [validationBuild.yml](https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/validationBuild.yml),
   [previewBuild.yml](https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/previewBuild.yml),
   [shared preview stages](https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/templates/common-preview-build-stages.yml).
-  Structural inspiration only; no Management-specific checks, credentials,
+  The dependency consumption feed is grounded in its
+  [NuGet config][management-nuget] and [feed variables][management-feed-vars].
+  Pipeline structure is inspiration only; no Management-specific credentials,
   installers, pools or connections were copied.
 - [1ES template documentation](https://aka.ms/1esptdocs) redirected to
   EngineeringHub, but direct and authenticated API reads were network-blocked
@@ -479,11 +545,14 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 - Read-only access to the
   [1ES template repository](https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates)
   did work. `refs/tags/release` resolved to
-  `77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2` during inspection. Inspected
+  `77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2` during inspection and the
+  2026-11-05 completeness recheck. Inspected
   `schema/1espt-base-schema.json`, both `v1/1ES.*.PipelineTemplate.yml`
   entrypoints, pool/output/signing guidance, `v1/Steps/Outputs/pipelineArtifact.yml`,
   `v1/Core/Steps/Inputs/pipelineArtifact.yml`, `v1/Jobs/ReleaseJob.yml` and
-  `v1/Steps/ReleaseSteps.yml`. In particular, output/input declarations and the
+  `v1/Steps/ReleaseSteps.yml`, `v1/Steps/UserProvidedReleaseSteps.yml`,
+  `v1/Steps/1ES.Signing.yml`, and `v1/Core/Steps/SBOM.Generation.Steps.yml`.
+  In particular, output/input declarations and the
   no-checkout release constraint were checked against implementation, not just
   Management examples. The YAML intentionally tracks the approved `release`
   channel, not that inspection commit; revalidate when the channel advances.
@@ -505,3 +574,5 @@ versions in ADO rather than weakening checks to satisfy a stale editor schema.
 [branch-support]: https://dev.azure.com/msazure/1ESPipelineTemplates/_git/1ESPipelineTemplates?path=/scripts/branch_validation/shared.py&version=GC77ca3ebb9fe785e4a6d4ab35cf9b1c68970ad1a2
 [dotnet-push]: https://github.com/microsoft/azure-pipelines-tasks/blob/bf4b17a2d2eeb6526f064deb03117943da3946bf/Tasks/DotNetCoreCLIV2/pushcommand.ts
 [management-preview]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/templates/common-preview-build-stages.yml
+[management-nuget]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/nuget.config
+[management-feed-vars]: https://github.com/Azure/Microsoft.AVS.Management/blob/f8642c4a1c97ca68f4f23032b7b25cee6975e864/.ci/vars.yml

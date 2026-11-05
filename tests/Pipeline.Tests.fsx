@@ -19,6 +19,46 @@ let rejects name action =
     let rejected = try action (); false with _ -> true
     check name rejected
 
+let configPath = Path.Combine(Build.root, "NuGet.config")
+check "repository has explicit NuGet configuration" (File.Exists configPath)
+let consumptionFeed =
+    "https://pkgs.dev.azure.com/avs-oss/Public/_packaging/PS-Consumption/nuget/v3/index.json"
+let config = XDocument.Load configPath
+let sources = config.Root.Element(XName.Get "packageSources").Elements() |> Seq.toList
+check "NuGet clears inherited package sources first"
+    (sources.Head.Name.LocalName = "clear")
+check "only the team consumption feed is configured"
+    (sources.Length = 2 && sources[1].Name.LocalName = "add"
+     && sources[1].Attribute(XName.Get "key").Value = "PS-Consumption"
+     && sources[1].Attribute(XName.Get "value").Value = consumptionFeed)
+check "NuGet does not inherit public audit sources"
+    (config.Root.Element(XName.Get "auditSources").Elements()
+     |> Seq.map (fun element -> element.Name.LocalName) |> Seq.toList = ["clear"])
+check "NuGet configuration contains no credentials"
+    (config.Root.Elements()
+     |> Seq.forall (fun element -> List.contains element.Name.LocalName ["packageSources"; "auditSources"]))
+
+let effectiveSources directory =
+    let start =
+        ProcessStartInfo("dotnet", WorkingDirectory = directory, UseShellExecute = false,
+                        RedirectStandardOutput = true, RedirectStandardError = true)
+    for argument in ["nuget"; "list"; "source"; "--format"; "short"] do
+        start.ArgumentList.Add argument
+    use child = Process.Start start
+    let output = child.StandardOutput.ReadToEndAsync()
+    let errors = child.StandardError.ReadToEndAsync()
+    if not (child.WaitForExit(30000)) then
+        child.Kill(true)
+        failwith "NuGet source probe timed out."
+    check "NuGet source probe succeeded" (child.ExitCode = 0)
+    errors.GetAwaiter().GetResult() |> ignore
+    output.GetAwaiter().GetResult().Trim()
+
+check "normal SDK commands use only the repository feed"
+    (effectiveSources Build.root = $"E {consumptionFeed}")
+check "FSI test script directory resolves only the repository feed"
+    (effectiveSources (Path.Combine(Build.root, "tests")) = $"E {consumptionFeed}")
+
 let repository = "Azure/DatatypeChannels.ASB"
 for reason in ["IndividualCI"; "BatchedCI"; "Manual"] do
     check $"{reason} master integration" (canTest repository reason "refs/heads/master")
@@ -58,10 +98,6 @@ check "release notes XML escaped" (property "PackageReleaseNotes" = "A & B < C")
 check "package author retained" (property "Authors" = "Eugene Tolmachev")
 check "repository metadata retained" (property "RepositoryUrl" = "https://github.com/Azure/DatatypeChannels.ASB")
 
-check "HTTPS feed accepted" (httpsUrl "feed" "https://api.nuget.org/v3/index.json" = "https://api.nuget.org/v3/index.json")
-for value in ["http://example.com"; "https://user@example.com"; "$(FEED)"] do
-    rejects $"invalid feed {value}" (fun () -> httpsUrl "feed" value |> ignore)
-
 let fixtureRoot =
     match fsi.CommandLineArgs |> Array.skip 1 with
     | [| directory |] -> Path.Combine(Path.GetFullPath directory, Guid.NewGuid().ToString("N"))
@@ -84,10 +120,20 @@ Directory.CreateDirectory fixtureRoot |> ignore
 try
     stageReleaseTools fixtureRoot
     for relativePath in
-        ["build.fsx"; "global.json"; "RELEASE_NOTES.md"] do
+        ["build.fsx"; "global.json"; "NuGet.config"; "RELEASE_NOTES.md"] do
         let actual = File.ReadAllBytes(Path.Combine(fixtureRoot, relativePath))
         let expected = File.ReadAllBytes(Path.Combine(Build.root, relativePath))
         check $"release artifact includes exact {relativePath}" (actual = expected)
+    check "checkout-free artifact resolves only the repository feed"
+        (effectiveSources fixtureRoot = $"E {consumptionFeed}")
+    let parent = Path.Combine(fixtureRoot, "source-parent")
+    let child = Path.Combine(parent, "child")
+    Directory.CreateDirectory child |> ignore
+    File.WriteAllText(Path.Combine(parent, "NuGet.config"),
+        "<configuration><packageSources><add key='inherited' value='https://inherited.example.invalid/v3/index.json' /></packageSources></configuration>")
+    File.Copy(configPath, Path.Combine(child, "NuGet.config"))
+    check "repository config clears an inherited source in real NuGet resolution"
+        (effectiveSources child = $"E {consumptionFeed}")
     check "release artifact has no source checkout"
         (not (Directory.Exists(Path.Combine(fixtureRoot, ".git"))))
     // The real artifact-hosted release target must validate without checkout or
@@ -120,7 +166,7 @@ try
         for name in
             ["BUILD_REPOSITORY_NAME"; "BUILD_REASON"; "BUILD_SOURCEBRANCH"; "BUILD_BUILDID"
              "PACKAGE_PATCH_OFFSET"; "RELEASE_REQUESTED"; "INTEGRATION_SUCCEEDED"
-             "ARTIFACT_DIRECTORY"; "CHECK_DIRECTORY"; "NUGET_RESTORE_SOURCE"
+             "ARTIFACT_DIRECTORY"; "CHECK_DIRECTORY"
              "NUGET_PUBLISH_SERVICE_CONNECTION"
              "SERVICE_BUS_NAMESPACE"; "AZURE_CLIENT_ID"; "AZURE_TENANT_ID"
              "AZURE_CLIENT_SECRET"; "AZURE_FEDERATED_TOKEN_FILE"] do
@@ -146,15 +192,15 @@ try
         check name ((code = 0) = expectedExit && output.Contains message)
         output
 
-    // No release notes or solution exist during introspection; no eager version/config reads.
+    // No release notes or solution exist during introspection; dependency config remains.
     let notes = Path.Combine(fixtureRoot, "RELEASE_NOTES.md")
     let notesText = File.ReadAllText notes
     File.Delete notes
-    expect "actual help without config or release notes" true "Target Module options" ["--help"] [] |> ignore
+    expect "actual help without application settings or release notes" true "Target Module options" ["--help"] [] |> ignore
     let listing = expect "actual list advertises unified targets" true "integration" ["--list"] []
     check "list includes artifact publisher" (listing.Contains("publish") && listing.Contains("ci-package"))
     let graph =
-        expect "actual graph without config or release notes" true "DependencyGraph for Target publish"
+        expect "actual graph without application settings or release notes" true "DependencyGraph for Target publish"
             ["-t"; "graph"; "publish"; "ci"; "integration"; "test"] []
     check "graph did not run build or cloud targets"
         (not (graph.Contains("Starting target 'ci-build'") || graph.Contains("Starting target 'integration'")))
@@ -418,6 +464,16 @@ check "shared build invokes the CI graph"
 check "integration invokes the artifact graph" (integration.Contains("dotnet fsi build.fsx -t integration"))
 check "release maps successful stage prerequisite" (release.Contains("INTEGRATION_SUCCEEDED: 'true'"))
 let buildSource = File.ReadAllText(Path.Combine(root, "build.fsx"))
+check "CI restore explicitly consumes repository config"
+    (buildSource.Contains("""["restore"; Pipeline.solution; "--configfile"; Pipeline.nugetConfig]"""))
+check "local FAKE restore explicitly consumes repository config"
+    (buildSource.Contains("ConfigFile = Some Pipeline.nugetConfig"))
+check "no pipeline source override or FSI feed injection"
+    (not (buildSource.Contains("NUGET_RESTORE_SOURCE") || combinedYaml.Contains("NUGET_RESTORE_SOURCE")
+          || buildSource.Contains("\"--source\"") || buildSource.Contains("#i \"nuget:")))
+check "PR/shared build does not authenticate package restore"
+    (not (prYaml.Contains("NuGetAuthenticate@") || buildYaml.Contains("NuGetAuthenticate@")
+          || buildYaml.Contains("System.AccessToken")))
 check "no raw publisher or key lookup is hidden in the script"
     (not (buildSource.Contains("\"nuget\"; \"push\"") || buildSource.Contains("NUGET_REPO_KEY")))
 printfn "%d checks passed" count

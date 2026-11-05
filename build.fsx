@@ -1,5 +1,5 @@
 #!/usr/bin/env -S dotnet fsi
-// Preseed these existing build dependencies from an approved feed on every agent image.
+// Preseed these existing build dependencies through NuGet.config on every agent image.
 #r "nuget: Fake.Core.Target, 6.2.0"
 #r "nuget: Fake.IO.FileSystem, 6.2.0"
 #r "nuget: Fake.DotNet.Cli, 6.2.0"
@@ -163,11 +163,6 @@ module Pipeline =
             failwith "SERVICE_BUS_NAMESPACE must be an existing public Azure Service Bus namespace FQDN."
         value
 
-    let httpsUrl name (value: string) =
-        match Uri.TryCreate(value, UriKind.Absolute) with
-        | true, uri when uri.Scheme = Uri.UriSchemeHttps && uri.UserInfo = "" -> value
-        | _ -> failwithf "%s must be an HTTPS URL without embedded credentials." name
-
     let metadata (version: string) (note: string) =
         let repository = "https://github.com/Azure/DatatypeChannels.ASB"
         let properties =
@@ -199,7 +194,7 @@ module Pipeline =
     let solution = Path.Combine(root, "DatatypeChannels.ASB.sln")
     let library = Path.Combine(root, "src/DatatypeChannels.ASB/DatatypeChannels.ASB.fsproj")
     let artifactDirectory () = required "ARTIFACT_DIRECTORY" |> Path.GetFullPath
-    let restoreSource () = required "NUGET_RESTORE_SOURCE" |> httpsUrl "NUGET_RESTORE_SOURCE"
+    let nugetConfig = Path.Combine(root, "NuGet.config")
 
     let currentVersion () =
         packageVersion (File.ReadAllText(Path.Combine(root, "RELEASE_NOTES.md")))
@@ -256,7 +251,7 @@ module Pipeline =
 
     let stageReleaseTools artifact =
         // 1ES release jobs have no checkout. Use this exact entrypoint, not a second runner.
-        for relativePath in ["build.fsx"; "global.json"; "RELEASE_NOTES.md"] do
+        for relativePath in ["build.fsx"; "global.json"; "NuGet.config"; "RELEASE_NOTES.md"] do
             File.Copy(Path.Combine(root, relativePath), Path.Combine(artifact, relativePath), true)
 
     let stageArtifact artifact =
@@ -327,7 +322,7 @@ Target.create "clean" (fun _ ->
 
 Target.description "Restore local solution dependencies."
 Target.create "restore" (fun _ ->
-    DotNet.restore id "."
+    DotNet.restore (fun options -> { options with ConfigFile = Some Pipeline.nugetConfig }) "."
 )
 
 Target.description "Build/publish local solution output without running integration tests."
@@ -415,7 +410,7 @@ Target.create "initCI" (fun _ ->
 Target.description "Validate CI configuration and the preinstalled SDK before writing build output."
 Target.create "ci-preflight" (fun _ ->
     Pipeline.artifactDirectory () |> ignore
-    Pipeline.restoreSource () |> ignore
+    if not (System.IO.File.Exists Pipeline.nugetConfig) then failwith "NuGet.config is required."
     Pipeline.required "CHECK_DIRECTORY" |> ignore
     Pipeline.currentVersion () |> ignore
     Pipeline.dotnet root ["--version"]
@@ -430,9 +425,9 @@ Target.create "check" (fun _ ->
 Target.description "Generate CI metadata using Build.BuildId plus PACKAGE_PATCH_OFFSET."
 Target.create "ci-meta" (fun _ -> Pipeline.writeMetadata ())
 
-Target.description "Restore the solution from the explicitly approved credential-free feed."
+Target.description "Restore the solution using the repository's internal-only NuGet.config."
 Target.create "ci-restore" (fun _ ->
-    Pipeline.dotnet root ["restore"; Pipeline.solution; "--source"; Pipeline.restoreSource ()]
+    Pipeline.dotnet root ["restore"; Pipeline.solution; "--configfile"; Pipeline.nugetConfig]
 )
 
 Target.description "Compile Release library and integration binaries without restoring."

@@ -30,4 +30,3 @@ stages:
       env:
         ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
         CHECK_DIRECTORY: $(Agent.TempDirectory)/pipeline-contracts
-        NUGET_RESTORE_SOURCE: $(NUGET_RESTORE_SOURCE)

@@ -18,8 +18,10 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 ## Building
 Pre-requisites:
 - .NET SDK matching `global.json` (10.0.403 with latest patch in that feature band)
-- Existing F# build dependencies from an approved NuGet source/cache (see the
-  [setup guide](docs/azure-pipelines.md#required-administrator-configuration))
+- Access to the team PS-Consumption feed in `NuGet.config` and preseeded F#
+  build dependencies. **Cold restore is currently blocked by unsaved upstream
+  packages**; cached builds do not prove feed readiness. See the
+  [setup guide](docs/azure-pipelines.md#required-administrator-configuration).
 - Azure CLI only for explicitly requested local provisioning/integration
 
 Build without Azure access:
@@ -29,9 +31,10 @@ dotnet fsi build.fsx -t build
 
 `build.fsx` is the single entrypoint for local and pipeline orchestration, using
 FAKE targets with separate dependency graphs. Discover the entire surface without
-credentials, local settings or target execution:
+application credentials, local settings or target execution (the dependency
+cache/feed prerequisite still applies):
 ```
-dotnet fsi build.fsx --help
+dotnet fsi build.fsx -- --help
 dotnet fsi build.fsx --list
 dotnet fsi build.fsx -t graph ci integration publish test
 ```
@@ -58,7 +61,8 @@ CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
 validation (`.pipelines/azure-pipelines-pr.yml`) and official trusted
 integration/package production (`.pipelines/azure-pipelines.yml`). They use
 preinstalled SDK tools, an existing namespace, and Azure Pipelines
-authentication; signing and resource authorization require administrator setup.
+authentication. Signing implementation/policy and resource authorization remain
+unresolved; this draft is not ready to enable production.
 Both invoke `build.fsx -t ci` through the shared YAML stage; trusted jobs use
 `check-trust`, `integration`, and `publish`.
 Release is an explicitly opted-in manual master run, not a Git tag trigger.
