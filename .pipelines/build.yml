@@ -27,13 +27,20 @@ stages:
     - checkout: self
       clean: true
       persistCredentials: false
+    # WARNING: Runtime SDK download, approved by the repository owner. The 1ES image
+    # has no .NET SDK; global.json pins the version and roll-forward policy.
+    - task: UseDotNet@2
+      displayName: Install the .NET SDK pinned by global.json
+      inputs:
+        packageType: sdk
+        useGlobalJson: true
     - ${{ if eq(parameters.authenticateRestore, true) }}:
       - task: NuGetAuthenticate@1
         displayName: Authenticate trusted dependency restore before FSI
         inputs:
           nuGetServiceConnections: $(NUGET_RESTORE_SERVICE_CONNECTION)
     - ${{ if eq(parameters.signArtifacts, false) }}:
-      - pwsh: |
+      - powershell: |
           dotnet fsi build.fsx -t ci
           exit $LASTEXITCODE
         displayName: Run unsigned PR build, check and package graph
@@ -41,7 +48,7 @@ stages:
           ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
           CHECK_DIRECTORY: $(Agent.TempDirectory)/pipeline-contracts
     - ${{ if eq(parameters.signArtifacts, true) }}:
-      - pwsh: |
+      - powershell: |
           dotnet fsi build.fsx -t official-compile
           exit $LASTEXITCODE
         displayName: Compile and isolate first-party signing inputs
@@ -93,7 +100,7 @@ stages:
                 "ToolVersion": "1.0"
               }
             ]
-      - pwsh: |
+      - powershell: |
           dotnet fsi build.fsx -t official-pack
           exit $LASTEXITCODE
         displayName: Verify signed DLLs and pack without rebuilding
@@ -130,7 +137,7 @@ stages:
                 "ToolVersion": "1.0"
               }
             ]
-      - pwsh: |
+      - powershell: |
           dotnet fsi build.fsx -t official-stage
           exit $LASTEXITCODE
         displayName: Verify final signatures and stage immutable artifact

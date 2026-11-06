@@ -224,16 +224,18 @@ module Pipeline =
         let verifyBinary (path: string) =
             if not (OperatingSystem.IsWindows()) then
                 invalidOp "Authenticode verification requires the approved Windows image."
+            // An inherited PSModulePath may resolve PowerShell 7 modules that Windows PowerShell cannot load.
             let command =
                 sprintf """
 $ErrorActionPreference = 'Stop'
+Import-Module -Name (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security')
 $signature = Get-AuthenticodeSignature -LiteralPath '%s'
 if ($signature.Status -ne 'Valid' -or $signature.SignatureType -ne 'Authenticode' -or
     $null -eq $signature.SignerCertificate -or $null -eq $signature.TimeStamperCertificate) {
     throw 'Expected a valid, timestamped embedded Authenticode signature.'
 }
                     """ (path.Replace("'", "''"))
-            run root "pwsh" [ "-NoProfile"; "-NonInteractive"; "-Command"; command ]
+            run root "powershell" [ "-NoProfile"; "-NonInteractive"; "-Command"; command ]
 
         let verifyPackage path =
             // Presence is only an early rejection. NuGet must verify the actual signature.

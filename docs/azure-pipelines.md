@@ -76,8 +76,8 @@ filename and nuspec ID/version, the package SHA256 recorded at build time, and
 equality of the packaged library and integration-test library, plus actual NuGet
 and first-party Authenticode signatures. Then the supported
 **`1ES.PublishNuGet@1` task**, not a raw push hidden inside an F# script, publishes
-that package using an approved external NuGet service connection and preinstalled
-dotnet. No duplicate-skip option hides publication errors. Repeating a
+that package using an approved external NuGet service connection and the dotnet
+SDK that `UseDotNet@2` installs from the drop's `global.json`. No duplicate-skip option hides publication errors. Repeating a
 successful publish will fail on an immutable feed, so inspect the existing
 package before retrying. Failed or skipped integration cannot authorize release.
 1ES release jobs cannot check out source. The build therefore includes only
@@ -119,8 +119,11 @@ were readable. These findings are based on source, not an assumed exemption:
   build/output/direct-download/caching task patterns and direct `NuGetCommand`
   push; it explicitly recognizes **`1ES.PublishNuGet@1`**. It also permits
   ordinary custom script steps; this is not permission to hide builds or new
-  dependency downloads in them. Our F# step only checks already-built inputs
-  using preinstalled dependencies. The NuGet hook runs
+  dependency downloads in them. Our F# step only checks already-built inputs.
+  The only added download is the `global.json`-pinned SDK from `UseDotNet@2`;
+  that task does not appear in the inspected release-step checks, but the
+  `internalConfig` build/output task lists were not inspected, so ADO expansion
+  of a release run must confirm it is accepted. The NuGet hook runs
   [Outputs/nuget.yml][nuget-output], including path validation and applicable
   SBOM handling; its [SBOM preparation][nuget-sbom] copies packages to temporary
   storage rather than repacking the input nupkg. No signing, packing, application
@@ -253,6 +256,16 @@ Do not allow queue-time overrides of version or security variables.
    | PR | `PR_POOL_NAME`, `PR_POOL_IMAGE` | `PR_SOURCE_ANALYSIS_POOL_NAME`, `PR_SOURCE_ANALYSIS_POOL_IMAGE` |
    | Trusted | `TRUSTED_POOL_NAME`, `TRUSTED_POOL_IMAGE` | `TRUSTED_SOURCE_ANALYSIS_POOL_NAME`, `TRUSTED_SOURCE_ANALYSIS_POOL_IMAGE` |
 
+   **Current PR configuration:** definition `DatatypeChannels.ASB-PR` (ID 10) in
+   `avs-oss/Public`, using the `Public` GitHub App connection that Microsoft.AVS.Management
+   uses. All four `PR_*` variables use the existing Management 1ES pool
+   `avs-management-1es-hosted-pool` with image
+   `avs-management-windows-2025-1es-image`; the pool is authorized for that definition only.
+   ADO pools are organization-scoped, so this pool cannot serve a definition in
+   `msazure/One`; an earlier `msazure/One` definition (487767) is disabled.
+   Sharing Management's pool means trusted and untrusted jobs share one pool and
+   rely on 1ES ephemeral agents for isolation; confirm that with the pool owners.
+
    All pool objects explicitly use `os: windows`, `name`, and `image`; source
    analysis is under `sdl.sourceAnalysisPool`. An image is an image identifier
    available **in that pool**, not an arbitrary `vmImage` label. Unset variables
@@ -260,12 +273,18 @@ Do not allow queue-time overrides of version or security variables.
    authorization and resolution must pass ADO validation before any run.
    The trusted pool serves build, integration and release; source-analysis
    pools must meet the same trust boundary as their owning definition.
-   Agents need preinstalled Git, PowerShell 7 (including Windows
-   `Get-AuthenticodeSignature`),
-   the SDK selected by `global.json` (**10.0.403/latestPatch**), and the .NET 10
-   runtime; trusted agents also need Azure CLI. `latestPatch` does not accept a
-   later feature band. Missing tools fail rather than downloading
-   repository-provided installers. Review
+   Agents need preinstalled Git and Windows PowerShell 5.1 (pipeline steps use
+   `powershell:`, and signature checks use its `Get-AuthenticodeSignature`);
+   trusted agents also need Azure CLI. PowerShell 7 is not required.
+   **The .NET SDK is downloaded at runtime** by `UseDotNet@2` with
+   `useGlobalJson: true` in every job that runs `dotnet`, because the shared
+   `avs-management-windows-2025-1es-image` has no .NET (run 1421 logged
+   `.NET is not installed`). The repository owner approved this runtime download.
+   `global.json` pins **10.0.403/latestPatch**; `latestPatch` does not accept a
+   later feature band, and no YAML step overrides the version. The download
+   depends on the Microsoft .NET distribution host being reachable under 1ES
+   network isolation; that is unverified until a run completes. A dedicated
+   image with the SDK preinstalled remains the more robust option. Review
    1ES's injected compliance tasks/tool acquisition separately with the template
    owners and approve their feeds/network access. Use clean, ephemeral agents,
    isolated between untrusted builds and trusted tests/releases. Workspace

@@ -648,7 +648,58 @@ check "production input explicitly selects strict SBOM inventory validation"
 check "successful integration required" (yaml.Contains("eq(dependencies.Integration.result, 'Succeeded')"))
 check "no missing-test success" (yaml.Contains("failTaskOnMissingResultsFile: true"))
 check "release approval environment" (yaml.Contains("environment: DatatypeChannels-ASB-Release"))
-check "no SDK installer" (not (combinedYaml.Contains("UseDotNet@")))
+// Line-based scan: a step ends at the next line indented no deeper than its "- task:" dash.
+let sdkInstallers (text: string) =
+    let lines = text.Split('\n')
+    let indent (line: string) = line.Length - line.TrimStart().Length
+    let isComment (line: string) = line.TrimStart().StartsWith("#")
+    lines
+    |> Array.indexed
+    |> Array.filter (fun (_, line) -> line.TrimStart() = "- task: UseDotNet@2")
+    |> Array.map (fun (start, task) ->
+        let inputs = lines[start + 1 ..] |> Array.takeWhile (fun line -> indent line > indent task)
+        let comment = lines[.. start - 1] |> Array.rev |> Array.takeWhile isComment |> Array.rev
+        String.concat "\n" comment, String.concat "\n" (Array.append [| task |] inputs))
+let pinsSdkOutsideGlobalJson (step: string) =
+    step.Contains("includePreviewVersions: true")
+    || step.Split('\n') |> Array.exists (fun line -> line.TrimStart().StartsWith("version:"))
+let precedes (first: string) (second: string) (text: string) =
+    let firstIndex = text.IndexOf(first, StringComparison.Ordinal)
+    firstIndex >= 0 && firstIndex < text.IndexOf(second, StringComparison.Ordinal)
+for name, text in [ "shared build", buildYaml; "integration", integration; "release", release ] do
+    let installer = match sdkInstallers text with [| single |] -> Some single | _ -> None
+    check $"{name} installs the SDK pinned by global.json"
+        (installer |> Option.exists (fun (_, step) ->
+            step.Contains("packageType: sdk") && step.Contains("useGlobalJson: true")))
+    check $"{name} SDK download carries the owner approval warning"
+        (installer |> Option.exists (fun (comment, _) ->
+            comment.Contains("WARNING: Runtime SDK download, approved by the repository owner")))
+    check $"{name} installs the SDK before its first FSI invocation"
+        (precedes "task: UseDotNet@2" "dotnet fsi build.fsx" text)
+for name, text in [ "shared build", buildYaml; "integration", integration ] do
+    check $"{name} installs the SDK before restore authentication"
+        (precedes "task: UseDotNet@2" "task: NuGetAuthenticate@1" text)
+let allSdkInstallers = sdkInstallers combinedYaml
+check "SDK version is pinned only by global.json"
+    (allSdkInstallers.Length = 3
+     && allSdkInstallers.Length = combinedYaml.Split("UseDotNet@").Length - 1
+     && allSdkInstallers |> Array.forall (snd >> pinsSdkOutsideGlobalJson >> not))
+check "release SDK resolves global.json from the drop"
+    (sdkInstallers release
+     |> Array.exists (fun (_, step) -> step.Contains("workingDirectory: $(Pipeline.Workspace)/drop")))
+check "UseDotNet@2 is the only tool installer"
+    (allSdkInstallers.Length = 3
+     && not ([ "NuGetToolInstaller@"; "UsePythonVersion@"; "UseNode@"; "NodeTool@"
+               "curl "; "wget "; "Invoke-WebRequest"; "dotnet-install" ]
+             |> List.exists (fun installer -> combinedYaml.Contains installer)))
+check "PR inherits the SDK installer from the shared build"
+    (prYaml.Contains("- template: /.pipelines/build.yml@self")
+     && not (prYaml.Contains("UseDotNet@")) && sdkInstallers buildYaml |> Array.isEmpty |> not)
+check "pipeline scripts run on Windows PowerShell"
+    (buildYaml.Contains("- powershell: |") && integration.Contains("- powershell: |")
+     && release.Contains("- powershell: |") && integration.Contains("scriptType: ps\n")
+     && not (combinedYaml.Contains("- pwsh:") || combinedYaml.Contains("pwsh: true")
+             || combinedYaml.Contains("scriptType: pscore")))
 check "no GitHub identity"
     (not (combinedYaml.Contains("AZURE_CLIENT_ID") || combinedYaml.Contains("id-token")))
 check "only build.fsx orchestrates the build"
@@ -670,6 +721,10 @@ check "CI versions test binaries despite test-local Directory.Build.props"
 check "signature checks invoke actual platform verifiers"
     (buildSource.Contains("Get-AuthenticodeSignature -LiteralPath")
      && buildSource.Contains("""[ "nuget"; "verify"; "--all"; path ]"""))
+check "Authenticode verification runs on Windows PowerShell"
+    (buildSource.Contains("run root \"powershell\"") && not (buildSource.Contains("\"pwsh\"")))
+check "Authenticode verifier ignores an inherited PowerShell 7 module path"
+    (buildSource.Contains(@"Import-Module -Name (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security')"))
 check "local FAKE restore explicitly consumes repository config"
     (buildSource.Contains("ConfigFile = Some Pipeline.nugetConfig"))
 check "no pipeline source override or FSI feed injection"

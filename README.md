@@ -62,8 +62,9 @@ dotnet fsi build.fsx
 
 CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
 validation (`.pipelines/azure-pipelines-pr.yml`) and official trusted
-integration/package production (`.pipelines/azure-pipelines.yml`). They use
-preinstalled SDK tools, an existing namespace, and Azure Pipelines
+integration/package production (`.pipelines/azure-pipelines.yml`). They install
+the `global.json`-pinned SDK with `UseDotNet@2` (an approved runtime download),
+use Windows PowerShell, an existing namespace, and Azure Pipelines
 authentication. Trusted Build now wires native `EsrpCodeSigning@6` DLL and NuGet
 signing between deliberate FAKE target boundaries. ESRP identity, vault,
 certificates, authorized key codes, resource approvals and live 1ES validation

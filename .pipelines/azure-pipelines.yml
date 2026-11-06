@@ -75,11 +75,17 @@ extends:
           fetchDepth: 0
           fetchTags: true
           persistCredentials: false
+        # WARNING: Runtime SDK download, approved by the repository owner; pinned by global.json.
+        - task: UseDotNet@2
+          displayName: Install the .NET SDK pinned by global.json
+          inputs:
+            packageType: sdk
+            useGlobalJson: true
         - task: NuGetAuthenticate@1
           displayName: Authenticate trusted script dependencies before FSI
           inputs:
             nuGetServiceConnections: $(NUGET_RESTORE_SERVICE_CONNECTION)
-        - pwsh: |
+        - powershell: |
             dotnet fsi build.fsx -t check-trust
             exit $LASTEXITCODE
           displayName: Require code already on master before Azure login
@@ -89,7 +95,7 @@ extends:
           displayName: Test against existing Service Bus namespace
           inputs:
             azureSubscription: DatatypeChannels-ASB-Integration
-            scriptType: pscore
+            scriptType: ps
             scriptLocation: inlineScript
             addSpnToEnvironment: false
             useGlobalConfig: false
@@ -142,7 +148,15 @@ extends:
                 - checkout: none
                 # 1ES owns download and provenance/signature validation.
                 # Release jobs cannot check out source; use tools from this drop.
-                - pwsh: |
+                # WARNING: Runtime SDK download, approved by the repository owner;
+                # pinned by the drop's global.json.
+                - task: UseDotNet@2
+                  displayName: Install the .NET SDK pinned by the drop's global.json
+                  inputs:
+                    packageType: sdk
+                    useGlobalJson: true
+                    workingDirectory: $(Pipeline.Workspace)/drop
+                - powershell: |
                     dotnet fsi build.fsx -t publish
                     exit $LASTEXITCODE
                   workingDirectory: $(Pipeline.Workspace)/drop
