@@ -281,10 +281,10 @@ Do not allow queue-time overrides of version or security variables.
    `avs-management-windows-2025-1es-image` has no .NET (run 1421 logged
    `.NET is not installed`). The repository owner approved this runtime download.
    `global.json` pins **10.0.403/latestPatch**; `latestPatch` does not accept a
-   later feature band, and no YAML step overrides the version. The download
-   depends on the Microsoft .NET distribution host being reachable under 1ES
-   network isolation; that is unverified until a run completes. A dedicated
-   image with the SDK preinstalled remains the more robust option. Review
+   later feature band, and no YAML version override. The download comes from
+   `builds.dotnet.microsoft.com`; PR run 1422 confirmed 1ES network isolation
+   allows it on this pool. A dedicated image with the SDK preinstalled remains the
+   more robust option. Review
    1ES's injected compliance tasks/tool acquisition separately with the template
    owners and approve their feeds/network access. Use clean, ephemeral agents,
    isolated between untrusted builds and trusted tests/releases. Workspace
