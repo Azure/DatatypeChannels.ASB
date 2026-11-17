@@ -6,14 +6,13 @@ Azure Pipelines. Eugene's June 19, 2026 comment records that the federated
 credentials were removed. **Do not recreate the GitHub federated credentials**,
 restore `AZURE_CREDENTIALS`, or add a client secret as a workaround.
 
-This repository supplies YAML and scripts, not a configured live pipeline.
-The explicitly authorized **OSS-FSharp-Consumption dependency feed** was created
-in the existing `avs-oss/Public` project. No other resources, explicit permission
-changes, identities or service connections were created. Administrators must
-complete the setup below before enabling trusted runs. The WI is in `msazure/One`;
-the owning team must confirm
-the approved pipeline hosting project and policies rather than assuming that a
-work-item project authorizes public-repository builds.
+This repository supplies YAML and scripts. **Both definitions are hosted in
+`avs-oss/Public`** (owner decision); the WI remains tracked in `msazure/One`, which
+does not host these pipelines. The explicitly authorized **OSS-FSharp-Consumption
+dependency feed** was created in `avs-oss/Public`, and the repository owner
+created the PR definition there. No other resources, explicit permission changes,
+identities or service connections were created by this migration. Administrators
+must complete the setup below before enabling trusted runs.
 
 ## Two definitions, not two release paths
 
@@ -240,13 +239,12 @@ Do not allow queue-time overrides of version or security variables.
    trusted definition has `pr: none`. Restrict edits, queue permissions and
    queue-time variable overrides. Authorize only the trusted definition for
    each protected resource, never all pipelines.
-2. **1ES repository access and agent pools.** Confirm the owning ADO
-   organization provides the Azure Repos project/repository
-   `1ESPipelineTemplates/1ESPipelineTemplates` and the `release` tag; the name
-   is relative to that organization, not a GitHub repository or an assumed
-   cross-organization connection. Arrange minimum read/template authorization
-   for both definitions without granting PR builds broader project access.
-   Do not copy Management's pool names or add an arbitrary endpoint.
+2. **1ES repository access and agent pools.** In `avs-oss`, the
+   `1ESPipelineTemplates/1ESPipelineTemplates` repository and `release` tag
+   resolve: PR run 1422 expanded the unofficial template there. The official
+   definition still needs its own template authorization; grant minimum read
+   access without giving PR builds broader project access.
+   Do not add an arbitrary endpoint.
 
    Set the following **nonsecret definition variables**, with queue-time
    overrides disabled, to approved existing 1ES-compatible resources:
@@ -265,6 +263,12 @@ Do not allow queue-time overrides of version or security variables.
    `msazure/One`; an earlier `msazure/One` definition (487767) is disabled.
    Sharing Management's pool means trusted and untrusted jobs share one pool and
    rely on 1ES ephemeral agents for isolation; confirm that with the pool owners.
+
+   **Official definition:** a `DatatypeChannels.ASB-Official` definition (ID 11)
+   was created in `avs-oss/Public` on 2026-11-06 but was no longer present on
+   2026-11-17. Recreate it there from `/.pipelines/azure-pipelines.yml` with the
+   `Public` GitHub App connection and the four `TRUSTED_*` variables; it must
+   also be authorized on the pool.
 
    All pool objects explicitly use `os: windows`, `name`, and `image`; source
    analysis is under `sdl.sourceAnalysisPool`. An image is an image identifier
@@ -352,10 +356,10 @@ Do not allow queue-time overrides of version or security variables.
    images/task acquisition policy must cover first-time provider setup.
 
    Set nonsecret `NUGET_RESTORE_SERVICE_CONNECTION` on the **official definition
-   only** to an existing authorized external NuGet connection targeting the
-   exact configured feed when the pipeline is outside `avs-oss`. For a pipeline
-   in `avs-oss`, explicitly set it empty to use the task's same-organization job
-   identity support. Do not leave an unresolved macro or reuse the release
+   only**. Because the pipelines are in `avs-oss`, the same organization as the
+   feed, set it explicitly empty to use the task's same-organization job
+   identity support; an external NuGet connection is needed only if hosting
+   ever moves. Do not leave an unresolved macro or reuse the release
    publication connection. The **trusted restore identity** needs
    [Feed and Upstream Reader (Collaborator)][feed-permissions] on
    `OSS-FSharp-Consumption`, not just Feed Reader. This lets authenticated
