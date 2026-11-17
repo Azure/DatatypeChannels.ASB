@@ -1,14 +1,12 @@
 # 1ES Azure Pipelines build and release
 
-Migration tracking: [WI 38505857](https://dev.azure.com/msazure/One/_workitems/edit/38505857).
-The WI requires removing GitHub federation to the Corp tenant and migrating to
-Azure Pipelines. Eugene's June 19, 2026 comment records that the federated
-credentials were removed. **Do not recreate the GitHub federated credentials**,
+This migration removes GitHub federation to the Corp tenant and moves CI and
+release to Azure Pipelines. The federated credentials have already been removed.
+**Do not recreate the GitHub federated credentials**,
 restore `AZURE_CREDENTIALS`, or add a client secret as a workaround.
 
 This repository supplies YAML and scripts. **Both definitions are hosted in
-`avs-oss/Public`** (owner decision); the WI remains tracked in `msazure/One`, which
-does not host these pipelines. The explicitly authorized **OSS-FSharp-Consumption
+`avs-oss/Public`** (owner decision). The explicitly authorized **OSS-FSharp-Consumption
 dependency feed** was created in `avs-oss/Public`, and the repository owner
 created the PR definition there. No other resources, explicit permission changes,
 identities or service connections were created by this migration. Administrators
