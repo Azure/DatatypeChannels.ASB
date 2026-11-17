@@ -1,6 +1,6 @@
 # Azure Service Bus Datatype Channels
 
-[![Build](https://github.com/Azure/DatatypeChannels.ASB/actions/workflows/azure.datatypechannels.asb.yml/badge.svg)](https://github.com/Azure/DatatypeChannels.ASB/actions/workflows/azure.datatypechannels.asb.yml)
+[Build and release with Azure Pipelines](docs/azure-pipelines.md)
 [![NuGet](https://img.shields.io/nuget/v/DatatypeChannels.ASB.svg?style=flat)](https://www.nuget.org/packages/DatatypeChannels.ASB/)
 
 
@@ -17,12 +17,38 @@ Small, F#-friendly abstraction layer over Azure Service Bus .NET clients, featur
 
 ## Building
 Pre-requisites:
-- .NET SDK 10.0
-- Azure CLI
+- .NET SDK matching `global.json` (10.0.403 with latest patch in that feature band)
+- Access to the shared `avs-oss/Public/OSS-FSharp-Consumption` feed in
+  `NuGet.config`. Empty-cache solution, FSI and existing tool-manifest restores
+  passed anonymously after authorized upstream caching. New dependency versions
+  must be saved by an authorized trusted pipeline or curator before
+  credential-free PRs can consume them.
+  Release images still require preseeded F# build dependencies. See the
+  [setup guide](docs/azure-pipelines.md#required-administrator-configuration).
+- Azure CLI only for explicitly requested local provisioning/integration
 
-When building for the first time:
+Build without Azure access:
 ```
-dotnet tool restore
+dotnet fsi build.fsx -t build
+```
+
+`build.fsx` is the single entrypoint for local and pipeline orchestration, using
+FAKE targets with separate dependency graphs. Discover the entire surface without
+application credentials, local settings or target execution (the dependency
+cache/feed prerequisite still applies):
+```
+dotnet fsi build.fsx -- --help
+dotnet fsi build.fsx --list
+dotnet fsi build.fsx -t graph ci official-compile official-pack official-stage integration publish test
+```
+
+The test suite is an integration suite. It creates Service Bus messaging entities
+and requires an authenticated identity with access to a test namespace. It is
+not an offline unit-test suite.
+
+For local integration testing only, the following explicit initialization
+**provisions Azure resources**. Do not run it for an offline build or in CI:
+```
 dotnet fsi build.fsx -t init <YOUR_LOCATION> <YOUR_RG> <YOUR_NAMESPACE>
 ```
 Where 
@@ -33,6 +59,36 @@ Where
 ```
 dotnet fsi build.fsx
 ```
+
+CI uses two 1ES Azure Pipelines definitions: credential-free unofficial PR
+validation (`.pipelines/azure-pipelines-pr.yml`) and official trusted
+integration/package production (`.pipelines/azure-pipelines.yml`). They install
+the `global.json`-pinned SDK with `UseDotNet@2` (an approved runtime download),
+use Windows PowerShell, an existing namespace, and Azure Pipelines
+authentication. Trusted Build now wires native `EsrpCodeSigning@6` DLL and NuGet
+signing between deliberate FAKE target boundaries. ESRP identity, vault,
+certificates, authorized key codes, resource approvals and live 1ES validation
+remain external prerequisites; this is not evidence of production readiness.
+Trusted Build and Integration authenticate dependency resolution with
+`NuGetAuthenticate@1` before FSI. The trusted restore identity requires
+**Feed and Upstream Reader (Collaborator)** permission to save packages from the
+feed's NuGet.org upstream, even though saved packages are public. PR/fork jobs
+must not share that privileged identity or receive the task/connection; their
+approved dependency closure must be anonymously readable.
+The shared stage defaults to unsigned `build.fsx -t ci` for PRs, without signing
+configuration or access. Official builds select `official-compile` → native DLL
+sign/verify → `official-pack` (no rebuild) → native NuGet sign/verify →
+`official-stage` (final signature checks/hash/staging). Only the two first-party
+DLLs are signed; third-party dependencies are not re-signed. Trusted jobs then use
+`check-trust`, `integration`, and `publish` on the same final signed artifact.
+Release is an explicitly opted-in manual master run, not a Git tag trigger.
+The `publish` target validates signatures and the tested artifact without building or packing;
+the native `1ES.PublishNuGet@1` task performs the actual push through an approved
+NuGet service connection after release approvals.
+Neither definition runs local `init`; `initCI` remains retired and fails closed.
+The default local target is still `test`, which contacts Azure. See the
+[pipeline setup and cutover guide](docs/azure-pipelines.md) for administrator
+prerequisites and release authorization.
 
 
 ## Contributing

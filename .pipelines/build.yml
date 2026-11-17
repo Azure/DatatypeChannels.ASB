@@ -1,0 +1,145 @@
+# Shared build logic only; entrypoints own trust and pool configuration.
+parameters:
+- name: condition
+  type: string
+  default: succeeded()
+- name: authenticateRestore
+  type: boolean
+  default: false
+- name: signArtifacts
+  type: boolean
+  default: false
+
+stages:
+- stage: Build
+  displayName: Build and package
+  condition: ${{ parameters.condition }}
+  jobs:
+  - job: Build
+    workspace:
+      clean: all
+    templateContext:
+      outputs:
+      - output: pipelineArtifact
+        targetPath: $(Build.ArtifactStagingDirectory)/drop
+        artifactName: drop
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: false
+    # WARNING: Runtime SDK download, approved by the repository owner. The 1ES image
+    # has no .NET SDK; global.json pins the version and roll-forward policy.
+    - task: UseDotNet@2
+      displayName: Install the .NET SDK pinned by global.json
+      inputs:
+        packageType: sdk
+        useGlobalJson: true
+    - ${{ if eq(parameters.authenticateRestore, true) }}:
+      - task: NuGetAuthenticate@1
+        displayName: Authenticate trusted dependency restore before FSI
+        inputs:
+          nuGetServiceConnections: $(NUGET_RESTORE_SERVICE_CONNECTION)
+    - ${{ if eq(parameters.signArtifacts, false) }}:
+      - powershell: |
+          dotnet fsi build.fsx -t ci
+          exit $LASTEXITCODE
+        displayName: Run unsigned PR build, check and package graph
+        env:
+          ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
+          CHECK_DIRECTORY: $(Agent.TempDirectory)/pipeline-contracts
+    - ${{ if eq(parameters.signArtifacts, true) }}:
+      - powershell: |
+          dotnet fsi build.fsx -t official-compile
+          exit $LASTEXITCODE
+        displayName: Compile and isolate first-party signing inputs
+        env:
+          ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
+          CHECK_DIRECTORY: $(Agent.TempDirectory)/pipeline-contracts
+          ESRP_CONNECTED_SERVICE_NAME: $(ESRP_CONNECTED_SERVICE_NAME)
+          ESRP_APP_REGISTRATION_CLIENT_ID: $(ESRP_APP_REGISTRATION_CLIENT_ID)
+          ESRP_APP_REGISTRATION_TENANT_ID: $(ESRP_APP_REGISTRATION_TENANT_ID)
+          ESRP_AUTH_AKV_NAME: $(ESRP_AUTH_AKV_NAME)
+          ESRP_AUTH_CERT_NAME: $(ESRP_AUTH_CERT_NAME)
+          ESRP_AUTH_SIGN_CERT_NAME: $(ESRP_AUTH_SIGN_CERT_NAME)
+          ESRP_DLL_KEY_CODE: $(ESRP_DLL_KEY_CODE)
+          ESRP_NUGET_KEY_CODE: $(ESRP_NUGET_KEY_CODE)
+      - task: EsrpCodeSigning@6
+        displayName: Sign and verify first-party product and test DLLs
+        inputs:
+          ConnectedServiceName: $(ESRP_CONNECTED_SERVICE_NAME)
+          AppRegistrationClientId: $(ESRP_APP_REGISTRATION_CLIENT_ID)
+          AppRegistrationTenantId: $(ESRP_APP_REGISTRATION_TENANT_ID)
+          AuthAKVName: $(ESRP_AUTH_AKV_NAME)
+          AuthCertName: $(ESRP_AUTH_CERT_NAME)
+          AuthSignCertName: $(ESRP_AUTH_SIGN_CERT_NAME)
+          FolderPath: $(Build.ArtifactStagingDirectory)/drop.signing
+          Pattern: '*.dll'
+          useMinimatch: true
+          ServiceEndpointUrl: https://api.esrp.microsoft.com/api/v2
+          signConfigType: inlineSignParams
+          inlineOperation: |
+            [
+              {
+                "KeyCode": "$(ESRP_DLL_KEY_CODE)",
+                "OperationCode": "SigntoolSign",
+                "Parameters": {
+                  "OpusName": "Microsoft",
+                  "OpusInfo": "http://www.microsoft.com",
+                  "FileDigest": "/fd \"SHA256\"",
+                  "PageHash": "/NPH",
+                  "TimeStamp": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+                },
+                "ToolName": "sign",
+                "ToolVersion": "1.0"
+              },
+              {
+                "KeyCode": "$(ESRP_DLL_KEY_CODE)",
+                "OperationCode": "SigntoolVerify",
+                "Parameters": {},
+                "ToolName": "sign",
+                "ToolVersion": "1.0"
+              }
+            ]
+      - powershell: |
+          dotnet fsi build.fsx -t official-pack
+          exit $LASTEXITCODE
+        displayName: Verify signed DLLs and pack without rebuilding
+        env:
+          ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
+      - task: EsrpCodeSigning@6
+        displayName: Sign and verify the final NuGet package
+        inputs:
+          ConnectedServiceName: $(ESRP_CONNECTED_SERVICE_NAME)
+          AppRegistrationClientId: $(ESRP_APP_REGISTRATION_CLIENT_ID)
+          AppRegistrationTenantId: $(ESRP_APP_REGISTRATION_TENANT_ID)
+          AuthAKVName: $(ESRP_AUTH_AKV_NAME)
+          AuthCertName: $(ESRP_AUTH_CERT_NAME)
+          AuthSignCertName: $(ESRP_AUTH_SIGN_CERT_NAME)
+          FolderPath: $(Build.ArtifactStagingDirectory)/drop/nuget
+          Pattern: '*.nupkg'
+          useMinimatch: true
+          ServiceEndpointUrl: https://api.esrp.microsoft.com/api/v2
+          signConfigType: inlineSignParams
+          inlineOperation: |
+            [
+              {
+                "KeyCode": "$(ESRP_NUGET_KEY_CODE)",
+                "OperationCode": "NuGetSign",
+                "Parameters": {},
+                "ToolName": "sign",
+                "ToolVersion": "1.0"
+              },
+              {
+                "KeyCode": "$(ESRP_NUGET_KEY_CODE)",
+                "OperationCode": "NuGetVerify",
+                "Parameters": {},
+                "ToolName": "sign",
+                "ToolVersion": "1.0"
+              }
+            ]
+      - powershell: |
+          dotnet fsi build.fsx -t official-stage
+          exit $LASTEXITCODE
+        displayName: Verify final signatures and stage immutable artifact
+        env:
+          ARTIFACT_DIRECTORY: $(Build.ArtifactStagingDirectory)/drop
